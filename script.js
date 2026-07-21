@@ -5,7 +5,7 @@ const SCRIPT_URL =
 const ROLE_LABELS = {
   "الطلاب": "طالب",
   "المشرفين": "مشرف",
-  "الأدمن": "أدمن",
+  "مسؤولون": "مسؤول",
 };
 
 function roleLabel(role) {

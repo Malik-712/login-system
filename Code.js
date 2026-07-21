@@ -1,5 +1,5 @@
 // ===== Sheet & column configuration =====
-var ACCOUNT_SHEETS = ['الطلاب', 'المشرفين', 'الأدمن'];
+var ACCOUNT_SHEETS = ['الطلاب', 'المشرفين', 'مسؤولون'];
 var STUDENTS_SHEET = 'الطلاب';
 
 // Column indices (1-based). Account sheets share cols 1-8; الطلاب adds col 9.
