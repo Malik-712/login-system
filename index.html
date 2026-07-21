@@ -4,102 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>تسجيل الدخول</title>
-    <style>
-      body {
-        font-family: Arial, Tahoma, sans-serif;
-        display: flex;
-        justify-content: center;
-        padding: 40px 10px;
-      }
-
-      .form-box {
-        width: 100%;
-        max-width: 480px;
-      }
-
-      h1 {
-        text-align: center;
-        font-size: 24px;
-        margin-bottom: 30px;
-      }
-
-      label {
-        display: block;
-        font-weight: bold;
-        margin-bottom: 6px;
-        margin-top: 18px;
-      }
-
-      input[type="text"],
-      input[type="password"] {
-        width: 100%;
-        padding: 10px;
-        font-size: 15px;
-        border: 1px solid #ccc;
-        border-radius: 6px;
-        box-sizing: border-box;
-      }
-
-      button {
-        width: 100%;
-        padding: 12px;
-        margin-top: 25px;
-        background-color: #1a73e8;
-        color: white;
-        font-size: 16px;
-        font-weight: bold;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-      }
-
-      button:hover {
-        background-color: #1558b3;
-      }
-
-      button:disabled {
-        background-color: #9bb8e8;
-        cursor: not-allowed;
-      }
-
-      .link-btn {
-        background: none;
-        color: #1a73e8;
-        font-weight: normal;
-        font-size: 14px;
-        margin-top: 12px;
-        padding: 0;
-      }
-
-      .link-btn:hover {
-        background: none;
-        text-decoration: underline;
-      }
-
-      .helper-text {
-        text-align: center;
-        font-size: 13px;
-        color: #666;
-        margin-top: 14px;
-      }
-
-      #msg {
-        text-align: center;
-        margin-top: 15px;
-        font-weight: bold;
-      }
-
-      .step {
-        display: none;
-      }
-
-      .step.active {
-        display: block;
-      }
-    </style>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div class="form-box">
+      <div class="brand">
+        <img class="brand-icon" src="favicon.svg" alt="" />
+      </div>
       <h1>تسجيل الدخول</h1>
 
       <div id="step1" class="step active">
@@ -161,7 +79,7 @@
       </div>
 
       <div id="step4" class="step">
-        <p style="text-align: center; font-size: 18px">
+        <p class="welcome-text">
           أهلاً <span id="welcomeName"></span> 👋
         </p>
       </div>
@@ -169,142 +87,6 @@
       <div id="msg"></div>
     </div>
 
-    <script>
-      const SCRIPT_URL =
-        "https://script.google.com/macros/s/AKfycbw0gDByt3iDBcFaBJDVUWZEY-BkMx2ApTLWpt6zKYRaZCxqzyDyEQKGdqfoaFLUGb19dg/exec";
-
-      let currentId = "";
-
-      const step1 = document.getElementById("step1");
-      const step2 = document.getElementById("step2");
-      const step3 = document.getElementById("step3");
-      const step4 = document.getElementById("step4");
-      const msg = document.getElementById("msg");
-
-      function showStep(step) {
-        [step1, step2, step3, step4].forEach((s) =>
-          s.classList.remove("active"),
-        );
-        step.classList.add("active");
-      }
-
-      function showMsg(text, color) {
-        msg.textContent = text;
-        msg.style.color = color;
-      }
-
-      function goToStep1() {
-        currentId = "";
-        document.getElementById("idInput").value = "";
-        showMsg("", "black");
-        showStep(step1);
-      }
-
-      function callApi(payload) {
-        return fetch(SCRIPT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify(payload),
-        }).then((res) => res.json());
-      }
-
-      document
-        .getElementById("idForm")
-        .addEventListener("submit", function (e) {
-          e.preventDefault();
-          const id = document.getElementById("idInput").value.trim();
-
-          if (!/^\d{6}$/.test(id)) {
-            showMsg("المعرف يجب أن يكون 6 أرقام فقط", "red");
-            return;
-          }
-
-          showMsg("جارِ التحقق...", "black");
-
-          callApi({ action: "checkId", id: id })
-            .then((result) => {
-              if (!result.success) {
-                showMsg(result.message, "red");
-                return;
-              }
-
-              currentId = id;
-              showMsg("", "black");
-
-              if (result.activated) {
-                showStep(step3);
-              } else {
-                showStep(step2);
-              }
-            })
-            .catch(() => showMsg("حدث خطأ، حاول مرة أخرى", "red"));
-        });
-
-      document
-        .getElementById("activateForm")
-        .addEventListener("submit", function (e) {
-          e.preventDefault();
-          const firstName = document
-            .getElementById("firstNameInput")
-            .value.trim();
-          const lastName = document
-            .getElementById("lastNameInput")
-            .value.trim();
-          const password = document
-            .getElementById("newPasswordInput")
-            .value.trim();
-
-          if (!/^\d{4}$/.test(password)) {
-            showMsg("كلمة المرور يجب أن تكون 4 أرقام فقط", "red");
-            return;
-          }
-
-          showMsg("جارِ التفعيل...", "black");
-
-          callApi({
-            action: "activate",
-            id: currentId,
-            firstName: firstName,
-            lastName: lastName,
-            password: password,
-          })
-            .then((result) => {
-              if (!result.success) {
-                showMsg(result.message, "red");
-                return;
-              }
-
-              document.getElementById("welcomeName").textContent = firstName;
-              showMsg("", "black");
-              showStep(step4);
-            })
-            .catch(() => showMsg("حدث خطأ، حاول مرة أخرى", "red"));
-        });
-
-      document
-        .getElementById("loginForm")
-        .addEventListener("submit", function (e) {
-          e.preventDefault();
-          const password = document
-            .getElementById("passwordInput")
-            .value.trim();
-
-          showMsg("جارِ الدخول...", "black");
-
-          callApi({ action: "login", id: currentId, password: password })
-            .then((result) => {
-              if (!result.success) {
-                showMsg(result.message, "red");
-                return;
-              }
-
-              document.getElementById("welcomeName").textContent =
-                result.firstName;
-              showMsg("", "black");
-              showStep(step4);
-            })
-            .catch(() => showMsg("حدث خطأ، حاول مرة أخرى", "red"));
-        });
-    </script>
+    <script src="script.js"></script>
   </body>
 </html>
