@@ -15,10 +15,8 @@
   </head>
   <body>
     <div class="form-box">
-      <div class="brand">
-        <img class="brand-icon" src="favicon.svg" alt="" />
-      </div>
       <h1>تسجيل الدخول</h1>
+      <div id="roleLabel" class="role-label" hidden></div>
 
       <div id="step1" class="step active">
         <form id="idForm">
@@ -79,9 +77,9 @@
       </div>
 
       <div id="step4" class="step">
-        <p class="welcome-text">
-          أهلاً <span id="welcomeName"></span> 👋
-        </p>
+        <p id="welcomeName" class="welcome-text"></p>
+        <p id="welcomeRole" class="welcome-role"></p>
+        <p id="guardianInfo" class="guardian-info" hidden></p>
       </div>
 
       <div id="msg"></div>

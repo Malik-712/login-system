@@ -1,0 +1,8 @@
+# Push ONLY the Apps Script backend. The frontend (index.html, script.js,
+# style.css, favicon.svg) lives in this repo but must never be uploaded to
+# the Apps Script project — script.js runs browser-only code at the top
+# level and would break the server runtime.
+**/**
+
+!Code.js
+!appsscript.json
