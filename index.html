@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <!-- Hamburger (right side, RTL) + slide-in drawer -->
     <button
       id="menuButton"
       class="menu-button"
@@ -42,7 +43,8 @@
       </div>
     </nav>
 
-    <div class="form-box">
+    <!-- ===== AUTH (login / activation flow) ===== -->
+    <div id="authView" class="form-box">
       <h1>تسجيل الدخول</h1>
       <div id="roleLabel" class="role-label" hidden></div>
 
@@ -104,13 +106,17 @@
         </form>
       </div>
 
-      <div id="step4" class="step">
-        <p id="welcomeName" class="welcome-text"></p>
-        <p id="welcomeRole" class="welcome-role"></p>
-        <p id="guardianInfo" class="guardian-info" hidden></p>
-      </div>
-
       <div id="msg"></div>
+    </div>
+
+    <!-- ===== APP (after login) — role-specific navigation & screens ===== -->
+    <div id="appView" class="app" hidden>
+      <header class="app-header">
+        <p id="appGreeting" class="app-greeting"></p>
+        <p id="appRole" class="app-role"></p>
+      </header>
+      <h2 id="appViewTitle" class="app-view-title"></h2>
+      <div id="appContent" class="app-content"></div>
     </div>
 
     <script src="script.js"></script>
