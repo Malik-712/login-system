@@ -15,6 +15,10 @@ var COL_GUARDIAN_ID = 9; // الطلاب only
 
 var STATUS_ACTIVE = 'نعم';
 
+// Pre-generated guardian IDs are pulled (not randomly generated) from this pool.
+var IDS_SHEET = 'IDs';
+var GUARDIAN_ID_POOL_RANGE = 'A82:A141'; // 60 pre-written 6-digit values
+
 function getSheetByName(name) {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
 }
@@ -62,8 +66,10 @@ function findStudentRowByGuardianId(guardianId) {
   return -1;
 }
 
-// Generate a unique 6-digit guardian ID that does not collide with any
-// existing account ID (any sheet) or any existing guardian ID.
+// Pull the first available guardian ID from the pre-generated pool
+// (IDs!A82:A141): the first pooled value that is not already assigned as a
+// guardian ID in الطلاب and is not used as an account ID in any sheet.
+// Returns the ID string, or null when every pooled value is already used.
 function generateGuardianId() {
   var used = {};
 
@@ -82,12 +88,25 @@ function generateGuardianId() {
     }
   }
 
-  var candidate;
-  do {
-    candidate = String(Math.floor(100000 + Math.random() * 900000));
-  } while (used[candidate]);
+  var idsSheet = getSheetByName(IDS_SHEET);
+  if (!idsSheet) {
+    return null;
+  }
 
-  return candidate;
+  var pool = idsSheet.getRange(GUARDIAN_ID_POOL_RANGE).getValues();
+  for (var p = 0; p < pool.length; p++) {
+    var value = pool[p][0];
+    if (value === '' || value === null || value === undefined) {
+      continue;
+    }
+    var candidate = String(value);
+    if (!used[candidate]) {
+      return candidate;
+    }
+  }
+
+  // Every pooled value is already taken.
+  return null;
 }
 
 function doPost(e) {
@@ -166,11 +185,15 @@ function activateAccount(id, firstName, lastName, password) {
     role: account.sheetName
   };
 
-  // Guardian ID is created only when a student (الطلاب) activates.
+  // Guardian ID is assigned only when a student (الطلاب) activates. If the
+  // pool is exhausted, the student is still activated — just without a
+  // guardian ID — so they are never blocked from logging in.
   if (account.sheetName === STUDENTS_SHEET) {
     var guardianId = generateGuardianId();
-    sheet.getRange(row, COL_GUARDIAN_ID).setValue(guardianId);
-    response.guardianId = guardianId;
+    if (guardianId !== null) {
+      sheet.getRange(row, COL_GUARDIAN_ID).setValue(guardianId);
+      response.guardianId = guardianId;
+    }
   }
 
   return response;
