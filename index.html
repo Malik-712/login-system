@@ -14,6 +14,34 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <button
+      id="menuButton"
+      class="menu-button"
+      type="button"
+      aria-label="القائمة"
+      aria-controls="menuPanel"
+      aria-expanded="false"
+      hidden
+    >
+      <span class="menu-bars" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </span>
+    </button>
+
+    <div id="menuOverlay" class="menu-overlay"></div>
+
+    <nav id="menuPanel" class="menu-panel" aria-label="القائمة">
+      <ul id="menuList" class="menu-list"></ul>
+      <div class="menu-footer">
+        <div class="menu-divider"></div>
+        <button id="logoutButton" class="menu-logout" type="button">
+          تسجيل الخروج
+        </button>
+      </div>
+    </nav>
+
     <div class="form-box">
       <h1>تسجيل الدخول</h1>
       <div id="roleLabel" class="role-label" hidden></div>

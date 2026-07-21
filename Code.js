@@ -158,6 +158,7 @@ function activateAccount(id, firstName, lastName, password) {
   sheet.getRange(row, COL_LAST_NAME).setValue(lastName);
   sheet.getRange(row, COL_PASSWORD).setValue(password);
   sheet.getRange(row, COL_STATUS).setValue(STATUS_ACTIVE);
+  sheet.getRange(row, COL_CREATED).setValue(new Date());
 
   var response = {
     success: true,

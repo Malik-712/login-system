@@ -36,12 +36,19 @@ body {
   color: var(--text);
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 40px 16px;
+  overflow-x: hidden;
   background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-end) 100%);
   background-attachment: fixed;
+}
+
+/* Lock background scrolling while the drawer is open */
+body.menu-open {
+  overflow: hidden;
 }
 
 /* ===== Login card ===== */
@@ -93,7 +100,7 @@ input[type="password"] {
   width: 100%;
   padding: 13px 14px;
   font-family: inherit;
-  font-size: 15px;
+  font-size: 16px; /* 16px keeps iOS from auto-zooming on focus */
   color: var(--text);
   background: #fbfcfe;
   border: 1.5px solid var(--border);
@@ -123,6 +130,7 @@ input[type="password"]:focus {
 /* ===== Buttons ===== */
 button {
   width: 100%;
+  min-height: 48px; /* comfortable touch target on mobile */
   padding: 13px;
   margin-top: 26px;
   font-family: inherit;
@@ -133,6 +141,8 @@ button {
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: background var(--transition), transform var(--transition),
     box-shadow var(--transition);
   box-shadow: 0 6px 16px rgba(37, 99, 235, 0.25);
@@ -161,7 +171,7 @@ button:disabled {
   font-weight: 600;
   font-size: 14px;
   margin-top: 14px;
-  padding: 0;
+  padding: 10px 4px;
   box-shadow: none;
 }
 
@@ -237,19 +247,201 @@ button:disabled {
   display: block;
 }
 
+/* ===== Hamburger button (welcome/home view only) ===== */
+.menu-button {
+  position: fixed;
+  top: 12px;
+  left: 12px; /* RTL page → top-left corner */
+  z-index: 60;
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  background: none; /* three plain lines only — no circle / background */
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.menu-button:hover,
+.menu-button:active {
+  background: none;
+  box-shadow: none;
+  transform: none;
+}
+
+.menu-bars {
+  position: relative;
+  width: 24px;
+  height: 16px;
+}
+
+.menu-bars span {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--secondary);
+  transition: transform 0.25s ease, opacity 0.2s ease;
+}
+
+.menu-bars span:nth-child(1) {
+  top: 0;
+}
+.menu-bars span:nth-child(2) {
+  top: 7px;
+}
+.menu-bars span:nth-child(3) {
+  top: 14px;
+}
+
+/* Lines morph into an X while the drawer is open */
+.menu-button.open .menu-bars span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+.menu-button.open .menu-bars span:nth-child(2) {
+  opacity: 0;
+}
+.menu-button.open .menu-bars span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+/* ===== Overlay (tap outside to close) ===== */
+.menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(15, 23, 42, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, visibility 0.25s ease;
+}
+
+.menu-overlay.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ===== Slide-in drawer ===== */
+.menu-panel {
+  position: fixed;
+  top: 0;
+  left: 0; /* RTL → drawer enters from the left */
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  width: 80%;
+  max-width: 300px;
+  height: 100%;
+  height: 100dvh;
+  padding: 72px 20px 24px; /* top space clears the hamburger */
+  background: var(--card-bg);
+  box-shadow: 6px 0 30px rgba(44, 62, 80, 0.18);
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition: transform 0.28s ease, visibility 0.28s ease;
+}
+
+.menu-panel.open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.menu-item {
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 14px 12px;
+  text-align: right;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.menu-item:hover {
+  color: var(--secondary);
+  background: #f1f5fb;
+  box-shadow: none;
+}
+
+.menu-item:active {
+  transform: none;
+}
+
+.menu-footer {
+  margin-top: auto; /* pins the divider + logout to the bottom */
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 0 0 14px;
+  background: var(--border);
+}
+
+.menu-logout {
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 14px;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--danger);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(220, 38, 38, 0.25);
+  transition: background var(--transition), box-shadow var(--transition);
+}
+
+.menu-logout:hover {
+  background: #b91c1c;
+  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.3);
+}
+
+.menu-logout:active {
+  transform: translateY(1px);
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 480px) {
   body {
-    padding: 24px 14px;
+    padding: 20px 14px;
   }
 
   .form-box {
-    padding: 30px 22px;
+    padding: 28px 20px;
     border-radius: 14px;
   }
 
   h1 {
-    font-size: 23px;
-    margin-bottom: 22px;
+    font-size: 22px;
+    margin-bottom: 20px;
+  }
+
+  .menu-panel {
+    width: 84%;
   }
 }
