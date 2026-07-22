@@ -31,11 +31,10 @@ var FAMILIES_SHEET = 'الأسر';
 var REQUIREMENTS_SHEET = 'المتطلبات';
 var COMPLETIONS_SHEET = 'الإنجازات';
 
-// الأسر columns
+// الأسر columns (color column removed by the spreadsheet owner)
 var COL_FAMILY_NAME = 1; // اسم الأسرة (unique key — no numeric id)
-var COL_FAMILY_COLOR = 2; // اللون (hex string)
-var COL_FAMILY_SUPERVISOR = 3; // معرف المشرف (references المشرفين)
-var COL_FAMILY_CREATED = 4; // تاريخ الإنشاء
+var COL_FAMILY_SUPERVISOR = 2; // معرف المشرف (references المشرفين)
+var COL_FAMILY_CREATED = 3; // تاريخ الإنشاء
 
 // المتطلبات columns
 var COL_REQ_NUMBER = 1; // رقم المتطلب (sequential, starts at 101)
@@ -54,7 +53,6 @@ var COL_COMP_DATE = 3; // تاريخ الإنجاز
 
 var REQ_START_NUMBER = 101;
 
-var CONTENT_TYPES = ['نص', 'رابط'];
 var DATE_SYSTEMS = ['هجري', 'ميلادي'];
 
 function getSheetByName(name) {
@@ -163,13 +161,17 @@ function doPost(e) {
 
   // ===== PART 1: Families (admin-only) =====
   } else if (action === 'createFamily') {
-    result = createFamily(body.adminId, body.name, body.color);
+    result = createFamily(body.adminId, body.name);
   } else if (action === 'assignSupervisorToFamily') {
     result = assignSupervisorToFamily(body.adminId, body.familyName, body.supervisorId);
   } else if (action === 'assignStudentToFamily') {
     result = assignStudentToFamily(body.adminId, body.studentId, body.familyName);
+  } else if (action === 'removeStudentFromFamily') {
+    result = removeStudentFromFamily(body.adminId, body.studentId);
   } else if (action === 'listSupervisors') {
     result = listSupervisors(body.adminId);
+  } else if (action === 'listStudents') {
+    result = listStudents(body.adminId);
   } else if (action === 'listFamiliesOverview') {
     result = listFamiliesOverview(body.adminId);
 
@@ -177,7 +179,6 @@ function doPost(e) {
   } else if (action === 'createRequirement') {
     result = createRequirement(
       body.adminId,
-      body.contentType,
       body.content,
       body.dateSystem,
       body.dateValue,
@@ -471,7 +472,7 @@ function isToday(dateValue) {
 // PART 1: Families (admin-only)
 // =====================================================================
 
-function createFamily(adminId, name, color) {
+function createFamily(adminId, name) {
   if (!isAdmin(adminId)) {
     return unauthorized();
   }
@@ -481,7 +482,7 @@ function createFamily(adminId, name, color) {
   if (findFamilyRow(name) !== -1) {
     return { success: false, message: 'اسم الأسرة موجود مسبقاً' };
   }
-  getSheetByName(FAMILIES_SHEET).appendRow([name, color || '', '', new Date()]);
+  getSheetByName(FAMILIES_SHEET).appendRow([name, '', new Date()]);
   return { success: true, message: 'تم إنشاء الأسرة' };
 }
 
@@ -512,8 +513,26 @@ function assignStudentToFamily(adminId, studentId, familyName) {
   if (findFamilyRow(familyName) === -1) {
     return { success: false, message: 'الأسرة غير موجودة' };
   }
+  // A student belongs to at most one family — never silently overwrite.
+  var current = stuAccount.sheet.getRange(stuAccount.row, COL_STUDENT_FAMILY).getValue();
+  if (current !== '' && current !== null && current !== undefined) {
+    return { success: false, message: 'الطالب منضم لأسرة أخرى بالفعل' };
+  }
   stuAccount.sheet.getRange(stuAccount.row, COL_STUDENT_FAMILY).setValue(familyName);
   return { success: true, message: 'تم إسناد الطالب للأسرة' };
+}
+
+// Clear a student's family assignment (الطلاب col 10) so they can join another.
+function removeStudentFromFamily(adminId, studentId) {
+  if (!isAdmin(adminId)) {
+    return unauthorized();
+  }
+  var stuAccount = findAccount(studentId);
+  if (!stuAccount || stuAccount.sheetName !== STUDENTS_SHEET) {
+    return { success: false, message: 'الطالب غير موجود' };
+  }
+  stuAccount.sheet.getRange(stuAccount.row, COL_STUDENT_FAMILY).setValue('');
+  return { success: true, message: 'تم إلغاء إسناد الطالب' };
 }
 
 function listSupervisors(adminId) {
@@ -537,6 +556,23 @@ function listSupervisors(adminId) {
     }
   }
   return { success: true, supervisors: supervisors };
+}
+
+// All students with their current family (الطلاب col 10, '' when unassigned),
+// for the family-creation wizard's student picker.
+function listStudents(adminId) {
+  if (!isAdmin(adminId)) {
+    return unauthorized();
+  }
+  var students = getAllStudents().map(function (s) {
+    return {
+      id: s.id,
+      firstName: s.firstName,
+      lastName: s.lastName,
+      family: s.family === null || s.family === undefined ? '' : s.family
+    };
+  });
+  return { success: true, students: students };
 }
 
 function listFamiliesOverview(adminId) {
@@ -583,7 +619,6 @@ function listFamiliesOverview(adminId) {
 
     families.push({
       name: name,
-      color: famData[i][COL_FAMILY_COLOR - 1],
       supervisorFirstName: supName ? supName.firstName : '',
       supervisorLastName: supName ? supName.lastName : '',
       students: famStudents,
@@ -598,12 +633,9 @@ function listFamiliesOverview(adminId) {
 // PART 2: Requirements & Completions
 // =====================================================================
 
-function createRequirement(adminId, contentType, content, dateSystem, dateValue, time, includeSupervisors) {
+function createRequirement(adminId, content, dateSystem, dateValue, time, includeSupervisors) {
   if (!isAdmin(adminId)) {
     return unauthorized();
-  }
-  if (CONTENT_TYPES.indexOf(contentType) === -1) {
-    return { success: false, message: 'نوع المحتوى غير صالح' };
   }
   if (DATE_SYSTEMS.indexOf(dateSystem) === -1) {
     return { success: false, message: 'نظام التاريخ غير صالح' };
@@ -620,9 +652,11 @@ function createRequirement(adminId, contentType, content, dateSystem, dateValue,
       : 'لا';
 
   var number = nextRequirementNumber();
+  // Content is stored as plain text; whether it is a link is auto-detected on
+  // display, so نوع المحتوى (col 2) is left blank.
   getSheetByName(REQUIREMENTS_SHEET).appendRow([
     number,
-    contentType,
+    '',
     content,
     dateSystem,
     dateValue || '',
@@ -716,10 +750,7 @@ function getFamilyProgress(supervisorId) {
   var family = null;
   for (var i = 1; i < famData.length; i++) {
     if (String(famData[i][COL_FAMILY_SUPERVISOR - 1]) === String(supervisorId)) {
-      family = {
-        name: famData[i][COL_FAMILY_NAME - 1],
-        color: famData[i][COL_FAMILY_COLOR - 1]
-      };
+      family = { name: famData[i][COL_FAMILY_NAME - 1] };
       break;
     }
   }
@@ -788,13 +819,11 @@ function getFamilyMembersSimpleStatus(studentId) {
     return { success: false, message: 'الطالب غير مسند إلى أسرة' };
   }
 
-  var color = '';
   var supId = '';
   var famSheet = getSheetByName(FAMILIES_SHEET);
   var famData = famSheet ? famSheet.getDataRange().getValues() : [];
   for (var i = 1; i < famData.length; i++) {
     if (String(famData[i][COL_FAMILY_NAME - 1]) === String(familyName)) {
-      color = famData[i][COL_FAMILY_COLOR - 1];
       supId = famData[i][COL_FAMILY_SUPERVISOR - 1];
       break;
     }
@@ -836,7 +865,6 @@ function getFamilyMembersSimpleStatus(studentId) {
     success: true,
     family: {
       name: familyName,
-      color: color,
       supervisorFirstName: supName ? supName.firstName : '',
       supervisorLastName: supName ? supName.lastName : ''
     },

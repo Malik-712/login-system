@@ -70,20 +70,24 @@ function pad2(n) {
   return (n < 10 ? "0" : "") + n;
 }
 
-// Only allow http(s)/mailto links; otherwise the content renders as plain text.
-function safeUrl(url) {
-  const s = String(url == null ? "" : url).trim();
-  return /^https?:\/\//i.test(s) || /^mailto:/i.test(s) ? s : null;
-}
-
-// Sanitize a family color to a hex value, with a brand fallback.
-function validColor(c) {
-  const s = String(c == null ? "" : c).trim();
-  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s) ? s : "#2c5fd6";
+// Auto-detect whether a requirement's content is a URL. Returns a safe href
+// to link to, or null when the content should be shown as plain text.
+function contentUrl(content) {
+  const s = String(content == null ? "" : content).trim();
+  if (!s || /\s/.test(s)) return null; // a link is a single token, no spaces
+  if (/^https?:\/\/\S+$/i.test(s)) return s; // explicit http(s) URL
+  if (/^www\.\S+$/i.test(s)) return "https://" + s; // www.example.com
+  // bare domain with a real 2+ letter TLD, optional path/query
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(s)) return "https://" + s;
+  return null;
 }
 
 function fullName(first, last) {
   return ((first || "") + " " + (last || "")).trim();
+}
+
+function isAssignedFamily(family) {
+  return family !== "" && family !== null && family !== undefined;
 }
 
 // ===== Session persistence (localStorage) =====
@@ -371,24 +375,21 @@ function statusDot(done) {
   return el("span", "status-dot " + (done ? "done" : "todo"));
 }
 
-function familyHeader(name, color) {
+function familyHeader(name) {
   const header = el("div", "family-header");
-  header.style.setProperty("--family-color", validColor(color));
-  header.appendChild(el("span", "family-swatch"));
   header.appendChild(el("span", "family-name", name));
   return header;
 }
 
-// Render a requirement's content as a link or as text.
+// Render a requirement's content: a clickable link when it looks like a URL,
+// otherwise plain text — the type is auto-detected (content is stored as text).
 function contentNode(item, linkClass, textClass) {
-  if (item.contentType === "رابط") {
+  const href = contentUrl(item.content);
+  if (href) {
     const a = el("a", linkClass, item.content);
-    const safe = safeUrl(item.content);
-    if (safe) {
-      a.href = safe;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-    }
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
     return a;
   }
   return el("span", textClass, item.content);
@@ -466,7 +467,7 @@ function renderStudentFamily() {
     (res) => {
       const wrap = el("div", "view");
       const fam = res.family;
-      wrap.appendChild(familyHeader(fam.name, fam.color));
+      wrap.appendChild(familyHeader(fam.name));
 
       const sup = fullName(fam.supervisorFirstName, fam.supervisorLastName);
       const info = el("div", "info-row");
@@ -533,7 +534,7 @@ function renderSupervisorHome() {
         setContent(wrap);
         return;
       }
-      wrap.appendChild(familyHeader(res.family.name, res.family.color));
+      wrap.appendChild(familyHeader(res.family.name));
 
       const total = res.students.length * res.requirements.length;
       let done = 0;
@@ -648,18 +649,12 @@ function renderAdminHome() {
       }
       res.families.forEach((f) => {
         const card = el("div", "family-card");
-        const strip = el("div", "family-card-strip");
-        strip.style.background = validColor(f.color);
-        card.appendChild(strip);
-
-        const body = el("div", "family-card-body");
-        body.appendChild(el("h3", "family-card-name", f.name));
+        card.appendChild(el("h3", "family-card-name", f.name));
         const sup = fullName(f.supervisorFirstName, f.supervisorLastName);
-        body.appendChild(el("div", "family-card-sup", "المشرف: " + (sup || "بدون مشرف")));
-        body.appendChild(el("div", "family-card-count", "الطلاب: " + f.students.length));
-        body.appendChild(barChart(f.completionPercentage));
-        body.appendChild(el("div", "family-card-pct", f.completionPercentage + "% إنجاز"));
-        card.appendChild(body);
+        card.appendChild(el("div", "family-card-sup", "المشرف: " + (sup || "بدون مشرف")));
+        card.appendChild(el("div", "family-card-count", "الطلاب: " + f.students.length));
+        card.appendChild(barChart(f.completionPercentage));
+        card.appendChild(el("div", "family-card-pct", f.completionPercentage + "% إنجاز"));
         wrap.appendChild(card);
       });
       setContent(wrap);
@@ -711,188 +706,296 @@ function toggleGroup(options, initial, onChange) {
   return node;
 }
 
+// =====================================================================
+// ADMIN — family-creation wizard (إدارة الأسر)
+// Step 1: family name → Step 2: pick supervisor → Step 3: pick students.
+// The family is created (createFamily → assignSupervisor → assignStudent*)
+// only when the wizard is finalized.
+// =====================================================================
+let wizardState = null;
+const WIZARD_STEPS = ["الأسرة", "المشرف", "الطلاب"];
+
 function renderAdminFamilies() {
   setContent(loadingNode());
   Promise.all([
     callApi({ action: "listSupervisors", adminId: currentSession.id }),
-    callApi({ action: "listFamiliesOverview", adminId: currentSession.id }),
+    callApi({ action: "listStudents", adminId: currentSession.id }),
   ])
-    .then(([supRes, famRes]) => {
+    .then(([supRes, stuRes]) => {
       if (!supRes || !supRes.success) {
         setContent(errorNode(supRes && supRes.message));
         return;
       }
-      if (!famRes || !famRes.success) {
-        setContent(errorNode(famRes && famRes.message));
+      if (!stuRes || !stuRes.success) {
+        setContent(errorNode(stuRes && stuRes.message));
         return;
       }
-      const wrap = el("div", "view");
-      wrap.appendChild(createFamilyForm());
-      wrap.appendChild(assignSupervisorForm(supRes.supervisors || [], famRes.families || []));
-      wrap.appendChild(assignStudentForm(famRes.families || []));
-      setContent(wrap);
+      wizardState = {
+        step: 1,
+        familyName: "",
+        supervisorId: "",
+        supervisors: supRes.supervisors || [],
+        students: stuRes.students || [],
+        selected: {},
+      };
+      renderWizard();
     })
     .catch(() => setContent(errorNode("حدث خطأ، حاول مرة أخرى")));
 }
 
-// Submit an admin action; on success refresh the families view (dropdowns).
-function submitAdmin(button, msgNode, payload, okMsg) {
-  button.disabled = true;
-  setFormMsg(msgNode, "جارِ الحفظ...", null);
-  callApi(payload)
-    .then((res) => {
-      if (res && res.success) {
-        setFormMsg(msgNode, okMsg || res.message || "تم", true);
-        setTimeout(renderAdminFamilies, 700);
-      } else {
-        setFormMsg(msgNode, (res && res.message) || "تعذّر الحفظ", false);
-        button.disabled = false;
-      }
-    })
-    .catch(() => {
-      setFormMsg(msgNode, "حدث خطأ، حاول مرة أخرى", false);
-      button.disabled = false;
-    });
+function buildStepper(active) {
+  const s = el("div", "stepper");
+  for (let i = 1; i <= WIZARD_STEPS.length; i++) {
+    const item = el(
+      "div",
+      "stepper-item" + (i === active ? " active" : "") + (i < active ? " done" : ""),
+    );
+    item.appendChild(el("span", "stepper-num", i < active ? "✓" : String(i)));
+    item.appendChild(el("span", "stepper-label", WIZARD_STEPS[i - 1]));
+    s.appendChild(item);
+    if (i < WIZARD_STEPS.length) {
+      s.appendChild(el("div", "stepper-line" + (i < active ? " done" : "")));
+    }
+  }
+  return s;
 }
 
-function createFamilyForm() {
-  const form = el("form", "admin-form");
-  form.appendChild(el("h3", null, "إنشاء أسرة"));
+function renderWizard() {
+  const wrap = el("div", "view");
+  wrap.appendChild(buildStepper(wizardState.step));
+  const card = el("div", "admin-form wizard-card");
+  if (wizardState.step === 1) buildWizardStep1(card);
+  else if (wizardState.step === 2) buildWizardStep2(card);
+  else buildWizardStep3(card);
+  wrap.appendChild(card);
+  setContent(wrap);
+}
 
-  const nameInput = el("input");
-  nameInput.type = "text";
-  nameInput.id = "famName";
-  form.appendChild(fieldRow("اسم الأسرة", nameInput));
+function supervisorNameById(id) {
+  const s = wizardState.supervisors.find((x) => String(x.id) === String(id));
+  return s ? fullName(s.firstName, s.lastName) : "—";
+}
 
-  const colorInput = el("input");
-  colorInput.type = "color";
-  colorInput.id = "famColor";
-  colorInput.value = "#2c5fd6";
-  form.appendChild(fieldRow("لون الأسرة", colorInput));
+function buildWizardStep1(card) {
+  card.appendChild(el("h3", null, "اسم الأسرة"));
+  const input = el("input");
+  input.type = "text";
+  input.id = "wizFamName";
+  input.placeholder = "أدخل اسم الأسرة";
+  input.value = wizardState.familyName;
+  input.addEventListener("input", () => {
+    wizardState.familyName = input.value;
+  });
+  card.appendChild(fieldRow("اسم الأسرة", input));
 
-  const submit = el("button", null, "إنشاء");
-  submit.type = "submit";
-  form.appendChild(submit);
   const msgNode = el("div", "form-msg");
-  form.appendChild(msgNode);
+  card.appendChild(msgNode);
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = nameInput.value.trim();
+  const nav = el("div", "wizard-nav");
+  const next = el("button", null, "التالي");
+  next.type = "button";
+  next.addEventListener("click", () => {
+    const name = input.value.trim();
     if (!name) {
       setFormMsg(msgNode, "اسم الأسرة مطلوب", false);
       return;
     }
-    submitAdmin(
-      submit,
-      msgNode,
-      { action: "createFamily", adminId: currentSession.id, name: name, color: colorInput.value },
-      "تم إنشاء الأسرة",
-    );
+    wizardState.familyName = name;
+    wizardState.step = 2;
+    renderWizard();
   });
-  return form;
+  nav.appendChild(next);
+  card.appendChild(nav);
 }
 
-function assignSupervisorForm(supervisors, families) {
-  const form = el("form", "admin-form");
-  form.appendChild(el("h3", null, "تعيين مشرف لأسرة"));
+function buildWizardStep2(card) {
+  card.appendChild(el("h3", null, "اختر المشرف"));
 
-  if (!families.length) {
-    form.appendChild(el("p", "empty", "أنشئ أسرة أولاً"));
-    return form;
+  if (!wizardState.supervisors.length) {
+    card.appendChild(el("p", "empty", "لا يوجد مشرفون"));
+  } else {
+    const list = el("div", "select-list");
+    wizardState.supervisors.forEach((sup) => {
+      const item = el(
+        "div",
+        "select-item" + (wizardState.supervisorId === sup.id ? " selected" : ""),
+      );
+      item.appendChild(el("span", "radio"));
+      item.appendChild(el("span", "select-name", fullName(sup.firstName, sup.lastName)));
+      item.addEventListener("click", () => {
+        wizardState.supervisorId = sup.id;
+        list
+          .querySelectorAll(".select-item")
+          .forEach((n) => n.classList.remove("selected"));
+        item.classList.add("selected");
+      });
+      list.appendChild(item);
+    });
+    card.appendChild(list);
   }
-  if (!supervisors.length) {
-    form.appendChild(el("p", "empty", "لا يوجد مشرفون"));
-    return form;
-  }
 
-  const famSel = selectControl(
-    "supFam",
-    families.map((f) => ({ value: f.name, label: f.name })),
-  );
-  form.appendChild(fieldRow("الأسرة", famSel));
-
-  const supSel = selectControl(
-    "supSel",
-    supervisors.map((s) => ({
-      value: s.id,
-      label: fullName(s.firstName, s.lastName) + " — " + s.id,
-    })),
-  );
-  form.appendChild(fieldRow("المشرف", supSel));
-
-  const submit = el("button", null, "تعيين");
-  submit.type = "submit";
-  form.appendChild(submit);
   const msgNode = el("div", "form-msg");
-  form.appendChild(msgNode);
+  card.appendChild(msgNode);
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    submitAdmin(
-      submit,
-      msgNode,
-      {
-        action: "assignSupervisorToFamily",
-        adminId: currentSession.id,
-        familyName: famSel.value,
-        supervisorId: supSel.value,
-      },
-      "تم تعيين المشرف",
-    );
+  const nav = el("div", "wizard-nav");
+  const back = el("button", "btn-secondary", "رجوع");
+  back.type = "button";
+  back.addEventListener("click", () => {
+    wizardState.step = 1;
+    renderWizard();
   });
-  return form;
-}
-
-function assignStudentForm(families) {
-  const form = el("form", "admin-form");
-  form.appendChild(el("h3", null, "إسناد طالب لأسرة"));
-
-  if (!families.length) {
-    form.appendChild(el("p", "empty", "أنشئ أسرة أولاً"));
-    return form;
-  }
-
-  const sidInput = el("input");
-  sidInput.type = "text";
-  sidInput.id = "stuId";
-  sidInput.inputMode = "numeric";
-  sidInput.maxLength = 6;
-  sidInput.placeholder = "معرف الطالب المكوّن من 6 أرقام";
-  form.appendChild(fieldRow("معرف الطالب", sidInput));
-
-  const famSel = selectControl(
-    "stuFam",
-    families.map((f) => ({ value: f.name, label: f.name })),
-  );
-  form.appendChild(fieldRow("الأسرة", famSel));
-
-  const submit = el("button", null, "إسناد");
-  submit.type = "submit";
-  form.appendChild(submit);
-  const msgNode = el("div", "form-msg");
-  form.appendChild(msgNode);
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const sid = sidInput.value.trim();
-    if (!/^\d{6}$/.test(sid)) {
-      setFormMsg(msgNode, "معرف الطالب يجب أن يكون 6 أرقام", false);
+  const next = el("button", null, "التالي");
+  next.type = "button";
+  next.addEventListener("click", () => {
+    if (!wizardState.supervisorId) {
+      setFormMsg(msgNode, "اختر مشرفاً للمتابعة", false);
       return;
     }
-    submitAdmin(
-      submit,
-      msgNode,
-      {
+    wizardState.step = 3;
+    renderWizard();
+  });
+  nav.appendChild(back);
+  nav.appendChild(next);
+  card.appendChild(nav);
+}
+
+function buildWizardStep3(card) {
+  card.appendChild(el("h3", null, "اختر الطلاب"));
+  card.appendChild(
+    el(
+      "div",
+      "wizard-review",
+      "الأسرة: " +
+        wizardState.familyName +
+        " • المشرف: " +
+        supervisorNameById(wizardState.supervisorId),
+    ),
+  );
+
+  if (!wizardState.students.length) {
+    card.appendChild(el("p", "empty", "لا يوجد طلاب"));
+  } else {
+    const list = el("div", "check-list");
+    wizardState.students.forEach((stu) => {
+      const assigned = isAssignedFamily(stu.family);
+      const item = el("div", "check-item" + (assigned ? " disabled" : ""));
+
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.checked = !assigned && !!wizardState.selected[stu.id];
+      cb.disabled = assigned;
+      cb.addEventListener("change", () => {
+        if (cb.checked) wizardState.selected[stu.id] = true;
+        else delete wizardState.selected[stu.id];
+      });
+      item.appendChild(cb);
+      item.appendChild(el("span", "cname", fullName(stu.firstName, stu.lastName)));
+
+      if (assigned) {
+        item.appendChild(el("span", "tag", "منضم لأسرة أخرى"));
+        const rm = el("button", "remove-link", "إزالة");
+        rm.type = "button";
+        rm.addEventListener("click", () => {
+          rm.disabled = true;
+          rm.textContent = "...";
+          callApi({
+            action: "removeStudentFromFamily",
+            adminId: currentSession.id,
+            studentId: stu.id,
+          })
+            .then((r) => {
+              if (r && r.success) {
+                stu.family = "";
+                renderWizard();
+              } else {
+                rm.disabled = false;
+                rm.textContent = "إزالة";
+              }
+            })
+            .catch(() => {
+              rm.disabled = false;
+              rm.textContent = "إزالة";
+            });
+        });
+        item.appendChild(rm);
+      }
+      list.appendChild(item);
+    });
+    card.appendChild(list);
+  }
+
+  const msgNode = el("div", "form-msg");
+  card.appendChild(msgNode);
+
+  const nav = el("div", "wizard-nav");
+  const back = el("button", "btn-secondary", "رجوع");
+  back.type = "button";
+  back.addEventListener("click", () => {
+    wizardState.step = 2;
+    renderWizard();
+  });
+  const finish = el("button", null, "إنشاء الأسرة");
+  finish.type = "button";
+  finish.addEventListener("click", () => finalizeWizard(finish, back, msgNode));
+  nav.appendChild(back);
+  nav.appendChild(finish);
+  card.appendChild(nav);
+}
+
+async function finalizeWizard(finishBtn, backBtn, msgNode) {
+  finishBtn.disabled = true;
+  backBtn.disabled = true;
+  setFormMsg(msgNode, "جارِ الإنشاء...", null);
+
+  try {
+    let res = await callApi({
+      action: "createFamily",
+      adminId: currentSession.id,
+      name: wizardState.familyName,
+    });
+    if (!res || !res.success) {
+      setFormMsg(msgNode, (res && res.message) || "تعذّر إنشاء الأسرة", false);
+      finishBtn.disabled = false;
+      backBtn.disabled = false;
+      return;
+    }
+
+    res = await callApi({
+      action: "assignSupervisorToFamily",
+      adminId: currentSession.id,
+      familyName: wizardState.familyName,
+      supervisorId: wizardState.supervisorId,
+    });
+    if (!res || !res.success) {
+      setFormMsg(msgNode, "أُنشئت الأسرة، لكن تعذّر تعيين المشرف", false);
+      finishBtn.disabled = false;
+      backBtn.disabled = false;
+      return;
+    }
+
+    const ids = Object.keys(wizardState.selected);
+    let assigned = 0;
+    let failed = 0;
+    for (const sid of ids) {
+      const r = await callApi({
         action: "assignStudentToFamily",
         adminId: currentSession.id,
         studentId: sid,
-        familyName: famSel.value,
-      },
-      "تم إسناد الطالب",
-    );
-  });
-  return form;
+        familyName: wizardState.familyName,
+      });
+      if (r && r.success) assigned++;
+      else failed++;
+    }
+
+    let m = "تم إنشاء الأسرة «" + wizardState.familyName + "» وإسناد " + assigned + " طالب";
+    if (failed) m += " (تعذّر إسناد " + failed + ")";
+    setFormMsg(msgNode, m, true);
+    setTimeout(renderAdminFamilies, 1500); // start a fresh wizard
+  } catch (e) {
+    setFormMsg(msgNode, "حدث خطأ، حاول مرة أخرى", false);
+    finishBtn.disabled = false;
+    backBtn.disabled = false;
+  }
 }
 
 function renderAdminRequirements() {
@@ -900,33 +1003,10 @@ function renderAdminRequirements() {
   const form = el("form", "admin-form");
   form.appendChild(el("h3", null, "إنشاء متطلب"));
 
-  // Content type + matching input
-  let contentType = "نص";
-  let contentControl;
-  const contentField = el("div");
-  function updateContentField() {
-    contentField.textContent = "";
-    if (contentType === "رابط") {
-      contentControl = el("input");
-      contentControl.type = "url";
-      contentControl.placeholder = "https://...";
-    } else {
-      contentControl = el("textarea");
-      contentControl.placeholder = "اكتب نص المتطلب";
-    }
-    contentField.appendChild(contentControl);
-  }
-  updateContentField();
-  form.appendChild(
-    fieldRow(
-      "نوع المحتوى",
-      toggleGroup(["نص", "رابط"], contentType, (val) => {
-        contentType = val;
-        updateContentField();
-      }),
-    ),
-  );
-  form.appendChild(fieldRow("المحتوى", contentField));
+  // Content — a single plain field; link vs. text is auto-detected on display.
+  const contentControl = el("textarea");
+  contentControl.placeholder = "اكتب محتوى المتطلب (نص أو رابط)";
+  form.appendChild(fieldRow("المحتوى", contentControl));
 
   // Date system + matching date input
   let dateSystem = "هجري";
@@ -1005,7 +1085,6 @@ function renderAdminRequirements() {
     callApi({
       action: "createRequirement",
       adminId: currentSession.id,
-      contentType: contentType,
       content: content,
       dateSystem: dateSystem,
       dateValue: (dateControl.value || "").trim(),

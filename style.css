@@ -137,16 +137,6 @@ select:focus {
   box-shadow: var(--shadow-focus);
 }
 
-input[type="color"] {
-  width: 100%;
-  height: 48px;
-  padding: 4px;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #fff;
-  cursor: pointer;
-}
-
 /* ===== Buttons ===== */
 button {
   width: 100%;
@@ -623,7 +613,6 @@ button:disabled {
 
 /* ===== Family (student & supervisor) ===== */
 .family-header {
-  --family-color: #2c5fd6;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -632,14 +621,7 @@ button:disabled {
   background: #fff;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  border-inline-start: 6px solid var(--family-color);
-}
-.family-swatch {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  background: var(--family-color);
-  flex: none;
+  border-inline-start: 6px solid var(--primary);
 }
 .family-name {
   font-size: 19px;
@@ -776,17 +758,8 @@ button:disabled {
 
 /* ===== Admin: family overview cards ===== */
 .family-card {
-  display: flex;
-  overflow: hidden;
-  margin-bottom: 12px;
-}
-.family-card-strip {
-  width: 8px;
-  flex: none;
-}
-.family-card-body {
-  flex: 1;
   padding: 14px;
+  margin-bottom: 12px;
 }
 .family-card-name {
   margin: 0 0 6px;
@@ -887,6 +860,193 @@ button:disabled {
 .toggle-btn.active:hover {
   color: #fff;
   background: var(--primary);
+}
+
+/* ===== Family-creation wizard ===== */
+.stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 4px 0 20px;
+}
+.stepper-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.stepper-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--muted);
+  background: #eef2f8;
+  border: 2px solid var(--border);
+  transition: all 0.2s ease;
+}
+.stepper-item.active .stepper-num {
+  color: #fff;
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.stepper-item.done .stepper-num {
+  color: #fff;
+  background: var(--success);
+  border-color: var(--success);
+}
+.stepper-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.stepper-item.active .stepper-label {
+  color: var(--secondary);
+}
+.stepper-line {
+  flex: 1;
+  max-width: 64px;
+  height: 2px;
+  margin: 0 6px 20px;
+  background: var(--border);
+}
+.stepper-line.done {
+  background: var(--success);
+}
+
+.wizard-card h3 {
+  margin-top: 0;
+}
+.wizard-review {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  background: #f1f5fb;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.wizard-nav {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+.wizard-nav button {
+  margin-top: 0;
+}
+.btn-secondary {
+  background: #eef2f8;
+  color: var(--secondary);
+  box-shadow: none;
+}
+.btn-secondary:hover {
+  background: #e2e8f2;
+  color: var(--secondary);
+  box-shadow: none;
+}
+
+/* Supervisor picker (single-select list) */
+.select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.select-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  color: var(--secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.select-item:hover {
+  border-color: #b9c2cf;
+}
+.select-item.selected {
+  border-color: var(--primary);
+  background: #eff4ff;
+}
+.select-item .radio {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex: none;
+  transition: all 0.15s ease;
+}
+.select-item.selected .radio {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: inset 0 0 0 4px #fff;
+}
+
+/* Student picker (multi-checkbox, scrollable) */
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 8px;
+  background: #fbfcfe;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.check-item input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.check-item .cname {
+  flex: 1;
+  font-weight: 700;
+  color: var(--secondary);
+}
+.check-item.disabled {
+  opacity: 0.6;
+  background: #f3f4f6;
+}
+.check-item .tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  background: #eef2f8;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.remove-link {
+  width: auto;
+  min-height: auto;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--danger);
+  background: none;
+  box-shadow: none;
+}
+.remove-link:hover {
+  background: #fde8e8;
+  color: var(--danger);
+  box-shadow: none;
 }
 
 .child-name {
