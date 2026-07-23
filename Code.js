@@ -38,13 +38,15 @@ var COL_FAMILY_CREATED = 3; // تاريخ الإنشاء
 
 // المتطلبات columns
 var COL_REQ_NUMBER = 1; // رقم المتطلب (sequential, starts at 101)
-var COL_REQ_CONTENT_TYPE = 2; // نوع المحتوى ("نص" | "رابط")
-var COL_REQ_CONTENT = 3; // المحتوى (text or URL)
-var COL_REQ_DATE_SYSTEM = 4; // نظام التاريخ ("هجري" | "ميلادي")
-var COL_REQ_DATE = 5; // التاريخ (plain text)
-var COL_REQ_TIME = 6; // الوقت (plain text, 12-hour)
-var COL_REQ_INCLUDE_SUPERVISORS = 7; // يشمل المشرفين ("نعم" | "لا")
-var COL_REQ_CREATED = 8; // تاريخ الإنشاء
+var COL_REQ_CONTENT = 2; // المحتوى (text or URL — link auto-detected on display)
+var COL_REQ_DATE_SYSTEM = 3; // نظام التاريخ ("هجري" | "ميلادي")
+var COL_REQ_START_DATE = 4; // تاريخ البداية (plain text, chosen system)
+var COL_REQ_START_TIME = 5; // وقت البداية (plain text, 12-hour)
+var COL_REQ_END_DATE = 6; // تاريخ النهاية (plain text, chosen system)
+var COL_REQ_END_TIME = 7; // وقت النهاية (plain text, 12-hour)
+var COL_REQ_INCLUDE_SUPERVISORS = 8; // يشمل المشرفين ("نعم" | "لا")
+var COL_REQ_CREATED = 9; // تاريخ الإنشاء
+var COL_REQ_CREATOR = 10; // أنشأه (admin's full name)
 
 // الإنجازات columns
 var COL_COMP_REQ_NUMBER = 1; // رقم المتطلب (references المتطلبات col 1)
@@ -174,6 +176,8 @@ function doPost(e) {
     result = listStudents(body.adminId);
   } else if (action === 'listFamiliesOverview') {
     result = listFamiliesOverview(body.adminId);
+  } else if (action === 'listAllAccounts') {
+    result = listAllAccounts(body.adminId);
 
   // ===== PART 2: Requirements & Completions =====
   } else if (action === 'createRequirement') {
@@ -181,8 +185,10 @@ function doPost(e) {
       body.adminId,
       body.content,
       body.dateSystem,
-      body.dateValue,
-      body.time,
+      body.startDate,
+      body.startTime,
+      body.endDate,
+      body.endTime,
       body.includeSupervisors
     );
   } else if (action === 'listRequirementsForUser') {
@@ -386,7 +392,8 @@ function getAllStudents() {
       firstName: data[i][COL_FIRST_NAME - 1],
       lastName: data[i][COL_LAST_NAME - 1],
       family: data[i][COL_STUDENT_FAMILY - 1],
-      guardianId: data[i][COL_GUARDIAN_ID - 1]
+      guardianId: data[i][COL_GUARDIAN_ID - 1],
+      activated: data[i][COL_STATUS - 1] === STATUS_ACTIVE
     });
   }
   return list;
@@ -407,13 +414,15 @@ function getAllRequirements() {
     }
     list.push({
       number: String(num),
-      contentType: data[i][COL_REQ_CONTENT_TYPE - 1],
       content: data[i][COL_REQ_CONTENT - 1],
       dateSystem: data[i][COL_REQ_DATE_SYSTEM - 1],
-      date: data[i][COL_REQ_DATE - 1],
-      time: data[i][COL_REQ_TIME - 1],
+      startDate: data[i][COL_REQ_START_DATE - 1],
+      startTime: data[i][COL_REQ_START_TIME - 1],
+      endDate: data[i][COL_REQ_END_DATE - 1],
+      endTime: data[i][COL_REQ_END_TIME - 1],
       includeSupervisors: data[i][COL_REQ_INCLUDE_SUPERVISORS - 1] === 'نعم',
-      created: data[i][COL_REQ_CREATED - 1]
+      created: data[i][COL_REQ_CREATED - 1],
+      creator: data[i][COL_REQ_CREATOR - 1]
     });
   }
   return list;
@@ -466,6 +475,111 @@ function isToday(dateValue) {
   var tz = Session.getScriptTimeZone();
   var today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
   return Utilities.formatDate(dateValue, tz, 'yyyy-MM-dd') === today;
+}
+
+// ===== Hijri (Umm al-Qura) <-> Gregorian, via Intl =====
+// Apps Script's Intl supports the islamic-umalqura calendar, so this matches
+// the frontend's Intl display exactly.
+function gregToUmalqura(date) {
+  var fmt = new Intl.DateTimeFormat('en-US-u-ca-islamic-umalqura', {
+    year: 'numeric', month: 'numeric', day: 'numeric'
+  });
+  var o = {};
+  fmt.formatToParts(date).forEach(function (p) {
+    if (p.type === 'year') o.hy = Number(p.value);
+    else if (p.type === 'month') o.hm = Number(p.value);
+    else if (p.type === 'day') o.hd = Number(p.value);
+  });
+  return o;
+}
+
+function jdToGregorian(jd) {
+  var l = jd + 68569;
+  var n = Math.floor((4 * l) / 146097);
+  l = l - Math.floor((146097 * n + 3) / 4);
+  var i = Math.floor((4000 * (l + 1)) / 1461001);
+  l = l - Math.floor((1461 * i) / 4) + 31;
+  var j = Math.floor((80 * l) / 2447);
+  var gd = l - Math.floor((2447 * j) / 80);
+  l = Math.floor(j / 11);
+  var gm = j + 2 - 12 * l;
+  var gy = 100 * (n - 49) + i + l;
+  return { gy: gy, gm: gm, gd: gd };
+}
+
+// Convert an Umm al-Qura Hijri date to Gregorian: a tabular estimate snapped to
+// the exact Umm al-Qura day via Intl (a few Intl calls only).
+function hijriToGregorian(hy, hm, hd) {
+  var jd = Math.floor((11 * hy + 3) / 30) + 354 * hy + 30 * hm -
+    Math.floor((hm - 1) / 2) + hd + 1948440 - 385;
+  var est = jdToGregorian(jd);
+  var guess = new Date(est.gy, est.gm - 1, est.gd);
+  for (var offset = -5; offset <= 5; offset++) {
+    var d = new Date(guess.getFullYear(), guess.getMonth(), guess.getDate() + offset);
+    var h = gregToUmalqura(d);
+    if (h.hy === hy && h.hm === hm && h.hd === hd) {
+      return { gy: d.getFullYear(), gm: d.getMonth() + 1, gd: d.getDate() };
+    }
+  }
+  return { gy: guess.getFullYear(), gm: guess.getMonth() + 1, gd: guess.getDate() };
+}
+
+// Parse a stored requirement date ("YYYY/MM/DD") + time ("hh:mm صباحاً/مساءً")
+// into an absolute Date, converting from Hijri when needed.
+function parseReqMoment(dateSystem, dateStr, timeStr) {
+  if (dateStr === '' || dateStr === null || dateStr === undefined) {
+    return null;
+  }
+  var parts = String(dateStr).split('/');
+  if (parts.length < 3) {
+    return null;
+  }
+  var y = Number(parts[0]);
+  var mo = Number(parts[1]);
+  var d = Number(parts[2]);
+  if (!y || !mo || !d) {
+    return null;
+  }
+
+  var hour = 0;
+  var min = 0;
+  if (timeStr !== '' && timeStr !== null && timeStr !== undefined) {
+    var t = String(timeStr);
+    var hm = t.match(/(\d{1,2}):(\d{2})/);
+    if (hm) {
+      hour = Number(hm[1]);
+      min = Number(hm[2]);
+    }
+    if (t.indexOf('مساء') !== -1) {
+      if (hour < 12) hour += 12;
+    } else if (t.indexOf('صباح') !== -1) {
+      if (hour === 12) hour = 0;
+    }
+  }
+
+  var g = dateSystem === 'هجري' ? hijriToGregorian(y, mo, d) : { gy: y, gm: mo, gd: d };
+  return new Date(g.gy, g.gm - 1, g.gd, hour, min, 0);
+}
+
+// Absolute start/end timestamps (ms) + status: "قادم" (before start), "نشط"
+// (within window), "منتهي" (after end), or '' when it can't be determined.
+function reqTiming(req) {
+  var now = Date.now();
+  var start = parseReqMoment(req.dateSystem, req.startDate, req.startTime);
+  var end = parseReqMoment(req.dateSystem, req.endDate, req.endTime);
+  var startTs = start ? start.getTime() : null;
+  var endTs = end ? end.getTime() : null;
+  var status;
+  if (startTs !== null && now < startTs) {
+    status = 'قادم';
+  } else if (endTs !== null && now > endTs) {
+    status = 'منتهي';
+  } else if (startTs !== null || endTs !== null) {
+    status = 'نشط';
+  } else {
+    status = '';
+  }
+  return { status: status, startTs: startTs, endTs: endTs };
 }
 
 // =====================================================================
@@ -535,10 +649,25 @@ function removeStudentFromFamily(adminId, studentId) {
   return { success: true, message: 'تم إلغاء إسناد الطالب' };
 }
 
+// Supervisors NOT yet assigned to any family (their ID absent from الأسر col 2)
+// — assigned supervisors are excluded entirely, not shown disabled.
 function listSupervisors(adminId) {
   if (!isAdmin(adminId)) {
     return unauthorized();
   }
+
+  var assigned = {};
+  var famSheet = getSheetByName(FAMILIES_SHEET);
+  if (famSheet) {
+    var famData = famSheet.getDataRange().getValues();
+    for (var f = 1; f < famData.length; f++) {
+      var supId = famData[f][COL_FAMILY_SUPERVISOR - 1];
+      if (supId !== '' && supId !== null && supId !== undefined) {
+        assigned[String(supId)] = true;
+      }
+    }
+  }
+
   var sheet = getSheetByName(SUPERVISORS_SHEET);
   var supervisors = [];
   if (sheet) {
@@ -547,6 +676,9 @@ function listSupervisors(adminId) {
       var id = data[i][COL_ID - 1];
       if (id === '' || id === null || id === undefined) {
         continue;
+      }
+      if (assigned[String(id)]) {
+        continue; // already manages a family
       }
       supervisors.push({
         id: String(id),
@@ -558,21 +690,56 @@ function listSupervisors(adminId) {
   return { success: true, supervisors: supervisors };
 }
 
-// All students with their current family (الطلاب col 10, '' when unassigned),
-// for the family-creation wizard's student picker.
+// Activated students only (حالة الحساب = نعم), with their current family
+// (الطلاب col 10, '' when unassigned), for the family-creation wizard's picker.
 function listStudents(adminId) {
   if (!isAdmin(adminId)) {
     return unauthorized();
   }
-  var students = getAllStudents().map(function (s) {
-    return {
-      id: s.id,
-      firstName: s.firstName,
-      lastName: s.lastName,
-      family: s.family === null || s.family === undefined ? '' : s.family
-    };
-  });
+  var students = getAllStudents()
+    .filter(function (s) {
+      return s.activated;
+    })
+    .map(function (s) {
+      return {
+        id: s.id,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        family: s.family === null || s.family === undefined ? '' : s.family
+      };
+    });
   return { success: true, students: students };
+}
+
+// Read-only roster of every account across all three sheets with activation
+// status, so an admin can check activation without opening the spreadsheet.
+function listAllAccounts(adminId) {
+  if (!isAdmin(adminId)) {
+    return unauthorized();
+  }
+  var accounts = [];
+  for (var s = 0; s < ACCOUNT_SHEETS.length; s++) {
+    var name = ACCOUNT_SHEETS[s];
+    var sheet = getSheetByName(name);
+    if (!sheet) {
+      continue;
+    }
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var id = data[i][COL_ID - 1];
+      if (id === '' || id === null || id === undefined) {
+        continue;
+      }
+      accounts.push({
+        id: String(id),
+        role: name,
+        firstName: data[i][COL_FIRST_NAME - 1],
+        lastName: data[i][COL_LAST_NAME - 1],
+        activated: data[i][COL_STATUS - 1] === STATUS_ACTIVE
+      });
+    }
+  }
+  return { success: true, accounts: accounts };
 }
 
 function listFamiliesOverview(adminId) {
@@ -633,7 +800,7 @@ function listFamiliesOverview(adminId) {
 // PART 2: Requirements & Completions
 // =====================================================================
 
-function createRequirement(adminId, content, dateSystem, dateValue, time, includeSupervisors) {
+function createRequirement(adminId, content, dateSystem, startDate, startTime, endDate, endTime, includeSupervisors) {
   if (!isAdmin(adminId)) {
     return unauthorized();
   }
@@ -652,17 +819,23 @@ function createRequirement(adminId, content, dateSystem, dateValue, time, includ
       : 'لا';
 
   var number = nextRequirementNumber();
-  // Content is stored as plain text; whether it is a link is auto-detected on
-  // display, so نوع المحتوى (col 2) is left blank.
+  var creatorName = getAccountName(adminId);
+  var creator = creatorName ? String(creatorName.firstName || '') + ' ' + String(creatorName.lastName || '') : '';
+  creator = creator.trim();
+
+  // Content is plain text (link auto-detected on display); start/end dates &
+  // times are stored as plain text in the chosen date system; أنشأه = creator.
   getSheetByName(REQUIREMENTS_SHEET).appendRow([
     number,
-    '',
     content,
     dateSystem,
-    dateValue || '',
-    time || '',
+    startDate || '',
+    startTime || '',
+    endDate || '',
+    endTime || '',
     includeSup,
-    new Date()
+    new Date(),
+    creator
   ]);
 
   return { success: true, message: 'تم إنشاء المتطلب', requirementNumber: number };
@@ -685,14 +858,23 @@ function listRequirementsForUser(id) {
     if (role === SUPERVISORS_SHEET && !req.includeSupervisors) {
       continue;
     }
+    var timing = reqTiming(req);
+    // Expired requirements leave the active/home list (they stay in السجل).
+    if (timing.status === 'منتهي') {
+      continue;
+    }
     out.push({
       number: req.number,
-      contentType: req.contentType,
       content: req.content,
       dateSystem: req.dateSystem,
-      date: req.date,
-      time: req.time,
+      startDate: req.startDate,
+      startTime: req.startTime,
+      endDate: req.endDate,
+      endTime: req.endTime,
       includeSupervisors: req.includeSupervisors,
+      status: timing.status,
+      startTs: timing.startTs,
+      endTs: timing.endTs,
       completed: !!userComp[req.number]
     });
   }
@@ -721,6 +903,15 @@ function completeRequirement(userId, requirementNumber) {
   // A supervisor may only complete requirements addressed to supervisors.
   if (account.sheetName === SUPERVISORS_SHEET && !req.includeSupervisors) {
     return unauthorized();
+  }
+
+  // Enforce the time window server-side: only active requirements are completable.
+  var timing = reqTiming(req);
+  if (timing.status === 'قادم') {
+    return { success: false, message: 'لم يبدأ وقت المتطلب بعد' };
+  }
+  if (timing.status === 'منتهي') {
+    return { success: false, message: 'انتهى وقت المتطلب' };
   }
 
   var sheet = getSheetByName(COMPLETIONS_SHEET);
@@ -764,13 +955,19 @@ function getFamilyProgress(supervisorId) {
 
   var reqList = [];
   for (var r = 0; r < requirements.length; r++) {
+    var rt = reqTiming(requirements[r]);
     reqList.push({
       number: requirements[r].number,
-      contentType: requirements[r].contentType,
       content: requirements[r].content,
       dateSystem: requirements[r].dateSystem,
-      date: requirements[r].date,
-      time: requirements[r].time
+      startDate: requirements[r].startDate,
+      startTime: requirements[r].startTime,
+      endDate: requirements[r].endDate,
+      endTime: requirements[r].endTime,
+      creator: requirements[r].creator,
+      status: rt.status,
+      startTs: rt.startTs,
+      endTs: rt.endTs
     });
   }
 
@@ -887,18 +1084,23 @@ function getStudentRecord(studentId) {
   for (var i = 0; i < requirements.length; i++) {
     var req = requirements[i];
     var key =
-      req.date !== '' && req.date !== null && req.date !== undefined
-        ? String(req.date)
+      req.startDate !== '' && req.startDate !== null && req.startDate !== undefined
+        ? String(req.startDate)
         : 'غير محدد';
     if (!groupsMap[key]) {
       groupsMap[key] = { date: key, dateSystem: req.dateSystem, items: [] };
       order.push(key);
     }
+    var rt = reqTiming(req);
     groupsMap[key].items.push({
       number: req.number,
-      contentType: req.contentType,
       content: req.content,
-      time: req.time,
+      startTime: req.startTime,
+      endDate: req.endDate,
+      endTime: req.endTime,
+      status: rt.status,
+      startTs: rt.startTs,
+      endTs: rt.endTs,
       completed: !!userComp[req.number]
     });
   }

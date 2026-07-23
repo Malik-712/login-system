@@ -1,7 +1,6 @@
 const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbw0gDByt3iDBcFaBJDVUWZEY-BkMx2ApTLWpt6zKYRaZCxqzyDyEQKGdqfoaFLUGb19dg/exec";
 
-// Backend sheet names (roles) and their friendly Arabic labels.
 const STUDENTS = "الطلاب";
 const SUPERVISORS = "المشرفين";
 const ADMINS = "مسؤولون";
@@ -10,6 +9,11 @@ const ROLE_LABELS = {
   [SUPERVISORS]: "مشرف",
   [ADMINS]: "مسؤول",
 };
+
+const HIJRI_MONTHS = [
+  "محرم", "صفر", "ربيع الأول", "ربيع الآخر", "جمادى الأولى", "جمادى الآخرة",
+  "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة",
+];
 
 const SESSION_KEY = "loginSession";
 
@@ -52,7 +56,7 @@ const menuPanel = document.getElementById("menuPanel");
 const menuList = document.getElementById("menuList");
 const logoutButton = document.getElementById("logoutButton");
 
-// ===== Small DOM helpers =====
+// ===== Small helpers =====
 function el(tag, className, text) {
   const e = document.createElement(tag);
   if (className) e.className = className;
@@ -70,18 +74,6 @@ function pad2(n) {
   return (n < 10 ? "0" : "") + n;
 }
 
-// Auto-detect whether a requirement's content is a URL. Returns a safe href
-// to link to, or null when the content should be shown as plain text.
-function contentUrl(content) {
-  const s = String(content == null ? "" : content).trim();
-  if (!s || /\s/.test(s)) return null; // a link is a single token, no spaces
-  if (/^https?:\/\/\S+$/i.test(s)) return s; // explicit http(s) URL
-  if (/^www\.\S+$/i.test(s)) return "https://" + s; // www.example.com
-  // bare domain with a real 2+ letter TLD, optional path/query
-  if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(s)) return "https://" + s;
-  return null;
-}
-
 function fullName(first, last) {
   return ((first || "") + " " + (last || "")).trim();
 }
@@ -90,12 +82,97 @@ function isAssignedFamily(family) {
   return family !== "" && family !== null && family !== undefined;
 }
 
-// ===== Session persistence (localStorage) =====
+// Auto-detect whether content is a URL. Returns a safe href, or null (plain text).
+function contentUrl(content) {
+  const s = String(content == null ? "" : content).trim();
+  if (!s || /\s/.test(s)) return null;
+  if (/^https?:\/\/\S+$/i.test(s)) return s;
+  if (/^www\.\S+$/i.test(s)) return "https://" + s;
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(s)) return "https://" + s;
+  return null;
+}
+
+// ===== Hijri (Umm al-Qura) via Intl — matches the backend =====
+function gregorianToHijri(date) {
+  const fmt = new Intl.DateTimeFormat("en-US-u-ca-islamic-umalqura", {
+    year: "numeric", month: "numeric", day: "numeric",
+  });
+  const o = {};
+  fmt.formatToParts(date).forEach((p) => {
+    if (p.type === "year") o.hy = Number(p.value);
+    else if (p.type === "month") o.hm = Number(p.value);
+    else if (p.type === "day") o.hd = Number(p.value);
+  });
+  return o;
+}
+
+// Current moment as { dateStr:"YYYY/MM/DD", timeStr:"hh:mm صباحاً/مساءً" }.
+function nowValue(system) {
+  const now = new Date();
+  let h = now.getHours();
+  const period = h < 12 ? "صباحاً" : "مساءً";
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  const timeStr = pad2(h12) + ":" + pad2(now.getMinutes()) + " " + period;
+  let dateStr;
+  if (system === "هجري") {
+    const hj = gregorianToHijri(now);
+    dateStr = hj.hy + "/" + pad2(hj.hm) + "/" + pad2(hj.hd);
+  } else {
+    dateStr = now.getFullYear() + "/" + pad2(now.getMonth() + 1) + "/" + pad2(now.getDate());
+  }
+  return { dateStr, timeStr };
+}
+
+function parseDateStr(dateStr) {
+  const p = String(dateStr || "").split("/");
+  return { y: p[0] || "", mo: p[1] || "", d: p[2] || "" };
+}
+
+function parseTimeStr(timeStr) {
+  const t = String(timeStr || "");
+  const m = t.match(/(\d{1,2}):(\d{2})/);
+  return {
+    hour: m ? pad2(Number(m[1])) : "06",
+    minute: m ? pad2(Number(m[2])) : "00",
+    period: t.indexOf("مساء") !== -1 ? "مساءً" : "صباحاً",
+  };
+}
+
+// ===== Countdown: single largest whole unit, floored, never rounded up =====
+function pluralAr(n, one, two, few, many) {
+  if (n === 1) return one;
+  if (n === 2) return two;
+  if (n >= 3 && n <= 10) return n + " " + few;
+  return n + " " + many;
+}
+
+function countdownText(endTs) {
+  if (endTs == null) return "";
+  const ms = endTs - Date.now();
+  if (ms <= 0) return "";
+  const mins = Math.floor(ms / 60000);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
+  let unit;
+  if (days >= 1) unit = pluralAr(days, "يوم", "يومان", "أيام", "يوماً");
+  else if (hours >= 1) unit = pluralAr(hours, "ساعة", "ساعتان", "ساعات", "ساعة");
+  else unit = pluralAr(mins, "دقيقة", "دقيقتان", "دقائق", "دقيقة");
+  return "باقي لها " + unit;
+}
+
+function statusBadge(status) {
+  if (!status) return null;
+  const cls = status === "نشط" ? "active" : status === "قادم" ? "upcoming" : "expired";
+  return el("span", "status-badge " + cls, status);
+}
+
+// ===== Session persistence =====
 function saveSession(session) {
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   } catch (e) {
-    /* storage unavailable — session just won't persist across refreshes */
+    /* storage unavailable */
   }
 }
 
@@ -150,7 +227,6 @@ function callApi(payload) {
   }).then((res) => res.json());
 }
 
-// Auth helper: disables the in-flight submit button, re-enables on settle.
 function submitRequest(button, payload, onSuccess) {
   button.disabled = true;
   return callApi(payload)
@@ -167,11 +243,9 @@ function submitRequest(button, payload, onSuccess) {
     });
 }
 
-// ===== Auth UI helpers =====
+// ===== Auth UI =====
 function showStep(step) {
-  for (let i = 0; i < steps.length; i++) {
-    steps[i].classList.remove("active");
-  }
+  for (let i = 0; i < steps.length; i++) steps[i].classList.remove("active");
   step.classList.add("active");
 }
 
@@ -211,7 +285,7 @@ function enterApp(session) {
   currentSession = session;
   saveSession(session);
 
-  appGreeting.textContent = greetingText(session); // no emoji
+  appGreeting.textContent = greetingText(session);
   appRole.textContent = "الدور: " + roleDisplay(session);
 
   setRole("");
@@ -241,7 +315,6 @@ function errorNode(message) {
   return el("div", "view-error", message || "تعذّر تحميل البيانات");
 }
 
-// Fetch, show a spinner while loading, then hand the result to onSuccess.
 function loadInto(payload, onSuccess) {
   setContent(loadingNode());
   callApi(payload)
@@ -255,8 +328,7 @@ function loadInto(payload, onSuccess) {
     .catch(() => setContent(errorNode("حدث خطأ، حاول مرة أخرى")));
 }
 
-// ===== Menu (right-side drawer), role-specific items =====
-// Each role's menu is data-driven — add entries here to extend a role's menu.
+// ===== Menus & routing =====
 const MENUS = {
   student: [
     { label: "الصفحة الرئيسية", view: "studentHome" },
@@ -265,12 +337,14 @@ const MENUS = {
   ],
   supervisor: [
     { label: "الصفحة الرئيسية", view: "supervisorHome" },
+    { label: "الطلاب", view: "supervisorStudents" },
     { label: "سجل الأسرة", view: "supervisorLog" },
   ],
   admin: [
     { label: "الصفحة الرئيسية", view: "adminHome" },
     { label: "إدارة الأسر", view: "adminFamilies" },
     { label: "إدارة المتطلبات", view: "adminRequirements" },
+    { label: "إدارة الحسابات", view: "adminAccounts" },
   ],
   guardian: [{ label: "الصفحة الرئيسية", view: "guardianHome" }],
 };
@@ -293,16 +367,19 @@ function buildMenuForRole(rk) {
   menuList.appendChild(frag);
 }
 
+// Home tabs all show the "الصفحة الرئيسية" heading; other tabs show their name.
 const VIEWS = {
-  studentHome: { title: "المتطلبات", render: renderStudentHome },
+  studentHome: { title: "الصفحة الرئيسية", render: renderStudentHome },
   studentFamily: { title: "الأسرة", render: renderStudentFamily },
   studentRecord: { title: "السجل", render: renderStudentRecord },
-  supervisorHome: { title: "متابعة الأسرة", render: renderSupervisorHome },
+  supervisorHome: { title: "الصفحة الرئيسية", render: renderSupervisorHome },
+  supervisorStudents: { title: "الطلاب", render: renderSupervisorStudents },
   supervisorLog: { title: "سجل الأسرة", render: renderSupervisorLog },
-  adminHome: { title: "نظرة عامة على الأسر", render: renderAdminHome },
+  adminHome: { title: "الصفحة الرئيسية", render: renderAdminHome },
   adminFamilies: { title: "إدارة الأسر", render: renderAdminFamilies },
   adminRequirements: { title: "إدارة المتطلبات", render: renderAdminRequirements },
-  guardianHome: { title: "متابعة الابن", render: renderGuardianHome },
+  adminAccounts: { title: "إدارة الحسابات", render: renderAdminAccounts },
+  guardianHome: { title: "الصفحة الرئيسية", render: renderGuardianHome },
 };
 
 function navigateTo(viewName) {
@@ -350,9 +427,7 @@ logoutButton.addEventListener("click", () => {
   goToStep1();
 });
 
-// =====================================================================
-// Shared render pieces
-// =====================================================================
+// ===== Shared render pieces =====
 function ringChart(pct, label) {
   const box = el("div", "chart-box");
   const ring = el("div", "ring");
@@ -381,8 +456,6 @@ function familyHeader(name) {
   return header;
 }
 
-// Render a requirement's content: a clickable link when it looks like a URL,
-// otherwise plain text — the type is auto-detected (content is stored as text).
 function contentNode(item, linkClass, textClass) {
   const href = contentUrl(item.content);
   if (href) {
@@ -395,9 +468,16 @@ function contentNode(item, linkClass, textClass) {
   return el("span", textClass, item.content);
 }
 
-// =====================================================================
-// STUDENT views
-// =====================================================================
+function windowText(item) {
+  const s = [item.startDate, item.startTime].filter(Boolean).join(" ");
+  const e = [item.endDate, item.endTime].filter(Boolean).join(" ");
+  if (s && e) return "من " + s + " إلى " + e;
+  if (s) return "يبدأ: " + s;
+  if (e) return "ينتهي: " + e;
+  return "";
+}
+
+// ===== STUDENT views =====
 function renderStudentHome() {
   loadInto(
     { action: "listRequirementsForUser", id: currentSession.id },
@@ -416,23 +496,32 @@ function renderStudentHome() {
 }
 
 function todoItem(req) {
-  const li = el("li", "todo-item");
-  if (req.completed) li.classList.add("done");
+  const upcoming = req.status === "قادم";
+  const li = el("li", "todo-item" + (req.completed ? " done" : "") + (upcoming ? " dim" : ""));
 
   const body = el("div", "todo-body");
-  const content = contentNode(req, "todo-link", "todo-text");
-  body.appendChild(content);
-  const metaText =
-    (req.date ? req.date : "") + (req.time ? " • " + req.time : "");
-  if (metaText) body.appendChild(el("div", "todo-meta", metaText));
+  body.appendChild(contentNode(req, "todo-link", "todo-text"));
+
+  const meta = el("div", "todo-meta");
+  const badge = statusBadge(req.status);
+  if (badge) meta.appendChild(badge);
+  const cd = countdownText(req.endTs);
+  if (cd) meta.appendChild(el("span", "countdown", cd));
+  body.appendChild(meta);
   li.appendChild(body);
 
-  const btn = el("button", "todo-check", req.completed ? "تم" : "تم الإنجاز");
-  btn.type = "button";
+  let btn;
   if (req.completed) {
+    btn = el("button", "todo-check checked", "تم");
+    btn.type = "button";
     btn.disabled = true;
-    btn.classList.add("checked");
+  } else if (upcoming) {
+    btn = el("button", "todo-check", "لم يبدأ");
+    btn.type = "button";
+    btn.disabled = true;
   } else {
+    btn = el("button", "todo-check", "تم الإنجاز");
+    btn.type = "button";
     btn.addEventListener("click", () => {
       btn.disabled = true;
       btn.textContent = "...";
@@ -449,6 +538,7 @@ function todoItem(req) {
           } else {
             btn.disabled = false;
             btn.textContent = "تم الإنجاز";
+            showMsg((r && r.message) || "تعذّر تسجيل الإنجاز", "error");
           }
         })
         .catch(() => {
@@ -502,8 +592,7 @@ function renderStudentRecord() {
         const section = el("section", "record-group");
         const head = el("div", "record-date");
         head.appendChild(el("span", null, g.date));
-        if (g.dateSystem)
-          head.appendChild(el("span", "record-date-system", g.dateSystem));
+        if (g.dateSystem) head.appendChild(el("span", "record-date-system", g.dateSystem));
         section.appendChild(head);
 
         const list = el("ul", "record-list");
@@ -511,6 +600,8 @@ function renderStudentRecord() {
           const item = el("li", "record-item" + (it.completed ? " done" : ""));
           item.appendChild(statusDot(it.completed));
           item.appendChild(contentNode(it, "record-link", "record-text"));
+          const badge = statusBadge(it.status);
+          if (badge) item.appendChild(badge);
           list.appendChild(item);
         });
         section.appendChild(list);
@@ -521,9 +612,11 @@ function renderStudentRecord() {
   );
 }
 
-// =====================================================================
-// SUPERVISOR views
-// =====================================================================
+// ===== SUPERVISOR views =====
+function activeReqs(reqList) {
+  return reqList.filter((r) => r.status !== "منتهي");
+}
+
 function renderSupervisorHome() {
   loadInto(
     { action: "getFamilyProgress", supervisorId: currentSession.id },
@@ -536,19 +629,43 @@ function renderSupervisorHome() {
       }
       wrap.appendChild(familyHeader(res.family.name));
 
-      const total = res.students.length * res.requirements.length;
+      // Overall completion over non-expired (active/upcoming) requirements.
+      const reqs = activeReqs(res.requirements);
+      const activeSet = {};
+      reqs.forEach((r) => (activeSet[r.number] = true));
+      let total = 0;
       let done = 0;
-      res.students.forEach((s) => (done += s.completedCount));
+      res.students.forEach((s) => {
+        s.completions.forEach((c) => {
+          if (activeSet[c.number]) {
+            total++;
+            if (c.completed) done++;
+          }
+        });
+      });
       const pct = total > 0 ? Math.round((done / total) * 100) : 0;
       wrap.appendChild(ringChart(pct, "نسبة إنجاز الأسرة"));
+      wrap.appendChild(
+        el("div", "child-count", res.students.length + " طلاب • " + reqs.length + " متطلبات فعّالة"),
+      );
 
-      if (!res.students.length) {
-        wrap.appendChild(el("p", "empty", "لا يوجد طلاب في الأسرة"));
-      } else {
-        const list = el("div", "student-progress-list");
-        res.students.forEach((s) =>
-          list.appendChild(studentProgressCard(s, res.requirements.length)),
-        );
+      // Active requirements with their remaining time.
+      if (reqs.length) {
+        wrap.appendChild(el("h3", "section-title", "المتطلبات الفعّالة"));
+        const list = el("ul", "todo-list");
+        reqs.forEach((r) => {
+          const item = el("li", "todo-item" + (r.status === "قادم" ? " dim" : ""));
+          const rbody = el("div", "todo-body");
+          rbody.appendChild(contentNode(r, "todo-link", "todo-text"));
+          const rmeta = el("div", "todo-meta");
+          const b = statusBadge(r.status);
+          if (b) rmeta.appendChild(b);
+          const cd = countdownText(r.endTs);
+          if (cd) rmeta.appendChild(el("span", "countdown", cd));
+          rbody.appendChild(rmeta);
+          item.appendChild(rbody);
+          list.appendChild(item);
+        });
         wrap.appendChild(list);
       }
       setContent(wrap);
@@ -556,20 +673,48 @@ function renderSupervisorHome() {
   );
 }
 
-function studentProgressCard(student, reqTotal) {
+function renderSupervisorStudents() {
+  loadInto(
+    { action: "getFamilyProgress", supervisorId: currentSession.id },
+    (res) => {
+      const wrap = el("div", "view");
+      if (!res.family) {
+        wrap.appendChild(el("p", "empty", "لا توجد أسرة مسندة إليك"));
+        setContent(wrap);
+        return;
+      }
+      if (!res.students.length) {
+        wrap.appendChild(el("p", "empty", "لا يوجد طلاب في الأسرة"));
+        setContent(wrap);
+        return;
+      }
+      const reqs = activeReqs(res.requirements); // expired excluded from active detail
+      const list = el("div", "student-progress-list");
+      res.students.forEach((s) => list.appendChild(studentProgressCard(s, reqs)));
+      wrap.appendChild(list);
+      setContent(wrap);
+    },
+  );
+}
+
+function studentProgressCard(student, reqList) {
+  const set = {};
+  reqList.forEach((r) => (set[r.number] = true));
+  const relevant = student.completions.filter((c) => set[c.number]);
+  const total = relevant.length;
+  const doneCount = relevant.filter((c) => c.completed).length;
+
   const card = el("div", "student-card");
   const head = el("div", "student-card-head");
   head.appendChild(el("span", "student-name", fullName(student.firstName, student.lastName)));
-  head.appendChild(
-    el("span", "student-count", student.completedCount + " / " + reqTotal),
-  );
+  head.appendChild(el("span", "student-count", doneCount + " / " + total));
   card.appendChild(head);
 
-  const pct = reqTotal ? Math.round((student.completedCount / reqTotal) * 100) : 0;
+  const pct = total ? Math.round((doneCount / total) * 100) : 0;
   card.appendChild(barChart(pct));
 
   const chips = el("div", "req-chips");
-  student.completions.forEach((c) => {
+  relevant.forEach((c) => {
     chips.appendChild(el("span", "req-chip " + (c.completed ? "done" : "todo"), c.number));
   });
   card.appendChild(chips);
@@ -586,7 +731,6 @@ function renderSupervisorLog() {
         setContent(wrap);
         return;
       }
-
       const reqByNum = {};
       res.requirements.forEach((r) => (reqByNum[r.number] = r));
 
@@ -604,7 +748,7 @@ function renderSupervisorLog() {
         const order = [];
         s.completions.forEach((c) => {
           const req = reqByNum[c.number] || {};
-          const key = req.date ? String(req.date) : "غير محدد";
+          const key = req.startDate ? String(req.startDate) : "غير محدد";
           if (!groups[key]) {
             groups[key] = [];
             order.push(key);
@@ -619,9 +763,14 @@ function renderSupervisorLog() {
           groups[key].forEach((entry) => {
             const item = el("li", "record-item" + (entry.completed ? " done" : ""));
             item.appendChild(statusDot(entry.completed));
-            item.appendChild(
-              contentNode(entry.req, "record-link", "record-text"),
-            );
+            const rbody = el("div", "record-body");
+            rbody.appendChild(contentNode(entry.req, "record-link", "record-text"));
+            if (entry.req.creator) {
+              rbody.appendChild(el("div", "creator-label", "أنشأه: " + entry.req.creator));
+            }
+            item.appendChild(rbody);
+            const badge = statusBadge(entry.req.status);
+            if (badge) item.appendChild(badge);
             ul.appendChild(item);
           });
           day.appendChild(ul);
@@ -634,9 +783,7 @@ function renderSupervisorLog() {
   );
 }
 
-// =====================================================================
-// ADMIN views
-// =====================================================================
+// ===== ADMIN views =====
 function renderAdminHome() {
   loadInto(
     { action: "listFamiliesOverview", adminId: currentSession.id },
@@ -662,10 +809,41 @@ function renderAdminHome() {
   );
 }
 
+function renderAdminAccounts() {
+  loadInto(
+    { action: "listAllAccounts", adminId: currentSession.id },
+    (res) => {
+      const wrap = el("div", "view");
+      if (!res.accounts.length) {
+        wrap.appendChild(el("p", "empty", "لا توجد حسابات"));
+        setContent(wrap);
+        return;
+      }
+      [STUDENTS, SUPERVISORS, ADMINS].forEach((role) => {
+        const rows = res.accounts.filter((a) => a.role === role);
+        if (!rows.length) return;
+        wrap.appendChild(el("h3", "section-title", ROLE_LABELS[role] + " (" + rows.length + ")"));
+        const list = el("div", "account-list");
+        rows.forEach((a) => {
+          const item = el("div", "account-item");
+          const name = fullName(a.firstName, a.lastName) || ("معرف " + a.id);
+          item.appendChild(el("span", "account-name", name));
+          item.appendChild(
+            el("span", "status-badge " + (a.activated ? "active" : "expired"), a.activated ? "مفعّل" : "غير مفعّل"),
+          );
+          list.appendChild(item);
+        });
+        wrap.appendChild(list);
+      });
+      setContent(wrap);
+    },
+  );
+}
+
+// ===== Shared form helpers =====
 function setFormMsg(node, text, ok) {
   node.textContent = text;
-  node.className =
-    "form-msg" + (ok === true ? " ok" : ok === false ? " err" : "");
+  node.className = "form-msg" + (ok === true ? " ok" : ok === false ? " err" : "");
 }
 
 function fieldRow(labelText, control) {
@@ -689,6 +867,7 @@ function selectControl(id, options) {
   return sel;
 }
 
+// A toggle group that notifies onChange (used for date-system switching).
 function toggleGroup(options, initial, onChange) {
   const node = el("div", "toggle-group");
   const btns = [];
@@ -706,12 +885,44 @@ function toggleGroup(options, initial, onChange) {
   return node;
 }
 
-// =====================================================================
-// ADMIN — family-creation wizard (إدارة الأسر)
-// Step 1: family name → Step 2: pick supervisor → Step 3: pick students.
-// The family is created (createFamily → assignSupervisor → assignStudent*)
-// only when the wizard is finalized.
-// =====================================================================
+// A stateful segmented toggle with a getter (used for AM/PM).
+function segmented(options, initial) {
+  let value = initial;
+  const node = el("div", "toggle-group");
+  const btns = [];
+  options.forEach((opt) => {
+    const b = el("button", "toggle-btn" + (opt === value ? " active" : ""), opt);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      value = opt;
+      btns.forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+    });
+    btns.push(b);
+    node.appendChild(b);
+  });
+  return { node, get: () => value };
+}
+
+// ===== Stepper (shared by both wizards) =====
+function buildStepper(labels, active) {
+  const s = el("div", "stepper");
+  for (let i = 1; i <= labels.length; i++) {
+    const item = el(
+      "div",
+      "stepper-item" + (i === active ? " active" : "") + (i < active ? " done" : ""),
+    );
+    item.appendChild(el("span", "stepper-num", i < active ? "✓" : String(i)));
+    item.appendChild(el("span", "stepper-label", labels[i - 1]));
+    s.appendChild(item);
+    if (i < labels.length) {
+      s.appendChild(el("div", "stepper-line" + (i < active ? " done" : "")));
+    }
+  }
+  return s;
+}
+
+// ===== ADMIN — family-creation wizard =====
 let wizardState = null;
 const WIZARD_STEPS = ["الأسرة", "المشرف", "الطلاب"];
 
@@ -743,26 +954,9 @@ function renderAdminFamilies() {
     .catch(() => setContent(errorNode("حدث خطأ، حاول مرة أخرى")));
 }
 
-function buildStepper(active) {
-  const s = el("div", "stepper");
-  for (let i = 1; i <= WIZARD_STEPS.length; i++) {
-    const item = el(
-      "div",
-      "stepper-item" + (i === active ? " active" : "") + (i < active ? " done" : ""),
-    );
-    item.appendChild(el("span", "stepper-num", i < active ? "✓" : String(i)));
-    item.appendChild(el("span", "stepper-label", WIZARD_STEPS[i - 1]));
-    s.appendChild(item);
-    if (i < WIZARD_STEPS.length) {
-      s.appendChild(el("div", "stepper-line" + (i < active ? " done" : "")));
-    }
-  }
-  return s;
-}
-
 function renderWizard() {
   const wrap = el("div", "view");
-  wrap.appendChild(buildStepper(wizardState.step));
+  wrap.appendChild(buildStepper(WIZARD_STEPS, wizardState.step));
   const card = el("div", "admin-form wizard-card");
   if (wizardState.step === 1) buildWizardStep1(card);
   else if (wizardState.step === 2) buildWizardStep2(card);
@@ -783,14 +977,11 @@ function buildWizardStep1(card) {
   input.id = "wizFamName";
   input.placeholder = "أدخل اسم الأسرة";
   input.value = wizardState.familyName;
-  input.addEventListener("input", () => {
-    wizardState.familyName = input.value;
-  });
+  input.addEventListener("input", () => (wizardState.familyName = input.value));
   card.appendChild(fieldRow("اسم الأسرة", input));
 
   const msgNode = el("div", "form-msg");
   card.appendChild(msgNode);
-
   const nav = el("div", "wizard-nav");
   const next = el("button", null, "التالي");
   next.type = "button";
@@ -810,33 +1001,25 @@ function buildWizardStep1(card) {
 
 function buildWizardStep2(card) {
   card.appendChild(el("h3", null, "اختر المشرف"));
-
   if (!wizardState.supervisors.length) {
-    card.appendChild(el("p", "empty", "لا يوجد مشرفون"));
+    card.appendChild(el("p", "empty", "لا يوجد مشرفون متاحون"));
   } else {
     const list = el("div", "select-list");
     wizardState.supervisors.forEach((sup) => {
-      const item = el(
-        "div",
-        "select-item" + (wizardState.supervisorId === sup.id ? " selected" : ""),
-      );
+      const item = el("div", "select-item" + (wizardState.supervisorId === sup.id ? " selected" : ""));
       item.appendChild(el("span", "radio"));
       item.appendChild(el("span", "select-name", fullName(sup.firstName, sup.lastName)));
       item.addEventListener("click", () => {
         wizardState.supervisorId = sup.id;
-        list
-          .querySelectorAll(".select-item")
-          .forEach((n) => n.classList.remove("selected"));
+        list.querySelectorAll(".select-item").forEach((n) => n.classList.remove("selected"));
         item.classList.add("selected");
       });
       list.appendChild(item);
     });
     card.appendChild(list);
   }
-
   const msgNode = el("div", "form-msg");
   card.appendChild(msgNode);
-
   const nav = el("div", "wizard-nav");
   const back = el("button", "btn-secondary", "رجوع");
   back.type = "button";
@@ -862,16 +1045,8 @@ function buildWizardStep2(card) {
 function buildWizardStep3(card) {
   card.appendChild(el("h3", null, "اختر الطلاب"));
   card.appendChild(
-    el(
-      "div",
-      "wizard-review",
-      "الأسرة: " +
-        wizardState.familyName +
-        " • المشرف: " +
-        supervisorNameById(wizardState.supervisorId),
-    ),
+    el("div", "wizard-review", "الأسرة: " + wizardState.familyName + " • المشرف: " + supervisorNameById(wizardState.supervisorId)),
   );
-
   if (!wizardState.students.length) {
     card.appendChild(el("p", "empty", "لا يوجد طلاب"));
   } else {
@@ -879,7 +1054,6 @@ function buildWizardStep3(card) {
     wizardState.students.forEach((stu) => {
       const assigned = isAssignedFamily(stu.family);
       const item = el("div", "check-item" + (assigned ? " disabled" : ""));
-
       const cb = el("input");
       cb.type = "checkbox";
       cb.checked = !assigned && !!wizardState.selected[stu.id];
@@ -890,7 +1064,6 @@ function buildWizardStep3(card) {
       });
       item.appendChild(cb);
       item.appendChild(el("span", "cname", fullName(stu.firstName, stu.lastName)));
-
       if (assigned) {
         item.appendChild(el("span", "tag", "منضم لأسرة أخرى"));
         const rm = el("button", "remove-link", "إزالة");
@@ -898,11 +1071,7 @@ function buildWizardStep3(card) {
         rm.addEventListener("click", () => {
           rm.disabled = true;
           rm.textContent = "...";
-          callApi({
-            action: "removeStudentFromFamily",
-            adminId: currentSession.id,
-            studentId: stu.id,
-          })
+          callApi({ action: "removeStudentFromFamily", adminId: currentSession.id, studentId: stu.id })
             .then((r) => {
               if (r && r.success) {
                 stu.family = "";
@@ -923,10 +1092,8 @@ function buildWizardStep3(card) {
     });
     card.appendChild(list);
   }
-
   const msgNode = el("div", "form-msg");
   card.appendChild(msgNode);
-
   const nav = el("div", "wizard-nav");
   const back = el("button", "btn-secondary", "رجوع");
   back.type = "button";
@@ -946,20 +1113,14 @@ async function finalizeWizard(finishBtn, backBtn, msgNode) {
   finishBtn.disabled = true;
   backBtn.disabled = true;
   setFormMsg(msgNode, "جارِ الإنشاء...", null);
-
   try {
-    let res = await callApi({
-      action: "createFamily",
-      adminId: currentSession.id,
-      name: wizardState.familyName,
-    });
+    let res = await callApi({ action: "createFamily", adminId: currentSession.id, name: wizardState.familyName });
     if (!res || !res.success) {
       setFormMsg(msgNode, (res && res.message) || "تعذّر إنشاء الأسرة", false);
       finishBtn.disabled = false;
       backBtn.disabled = false;
       return;
     }
-
     res = await callApi({
       action: "assignSupervisorToFamily",
       adminId: currentSession.id,
@@ -972,7 +1133,6 @@ async function finalizeWizard(finishBtn, backBtn, msgNode) {
       backBtn.disabled = false;
       return;
     }
-
     const ids = Object.keys(wizardState.selected);
     let assigned = 0;
     let failed = 0;
@@ -986,11 +1146,10 @@ async function finalizeWizard(finishBtn, backBtn, msgNode) {
       if (r && r.success) assigned++;
       else failed++;
     }
-
     let m = "تم إنشاء الأسرة «" + wizardState.familyName + "» وإسناد " + assigned + " طالب";
     if (failed) m += " (تعذّر إسناد " + failed + ")";
     setFormMsg(msgNode, m, true);
-    setTimeout(renderAdminFamilies, 1500); // start a fresh wizard
+    setTimeout(renderAdminFamilies, 1500);
   } catch (e) {
     setFormMsg(msgNode, "حدث خطأ، حاول مرة أخرى", false);
     finishBtn.disabled = false;
@@ -998,124 +1157,244 @@ async function finalizeWizard(finishBtn, backBtn, msgNode) {
   }
 }
 
+// ===== ADMIN — requirement-creation wizard (3 steps) =====
+let reqWizardState = null;
+const REQ_WIZARD_STEPS = ["المتطلب", "البداية", "النهاية"];
+
 function renderAdminRequirements() {
+  reqWizardState = {
+    step: 1,
+    content: "",
+    includeSupervisors: false,
+    dateSystem: "هجري",
+    start: { dateStr: "", timeStr: "" },
+    end: { dateStr: "", timeStr: "" },
+    picker: null,
+  };
+  renderReqWizard();
+}
+
+function renderReqWizard() {
   const wrap = el("div", "view");
-  const form = el("form", "admin-form");
-  form.appendChild(el("h3", null, "إنشاء متطلب"));
-
-  // Content — a single plain field; link vs. text is auto-detected on display.
-  const contentControl = el("textarea");
-  contentControl.placeholder = "اكتب محتوى المتطلب (نص أو رابط)";
-  form.appendChild(fieldRow("المحتوى", contentControl));
-
-  // Date system + matching date input
-  let dateSystem = "هجري";
-  let dateControl;
-  const dateField = el("div");
-  function updateDateField() {
-    dateField.textContent = "";
-    if (dateSystem === "ميلادي") {
-      dateControl = el("input");
-      dateControl.type = "date";
-    } else {
-      dateControl = el("input");
-      dateControl.type = "text";
-      dateControl.placeholder = "مثال: 15/09/1447";
-    }
-    dateField.appendChild(dateControl);
-  }
-  updateDateField();
-  form.appendChild(
-    fieldRow(
-      "نظام التاريخ",
-      toggleGroup(["هجري", "ميلادي"], dateSystem, (val) => {
-        dateSystem = val;
-        updateDateField();
-      }),
-    ),
-  );
-  form.appendChild(fieldRow("التاريخ", dateField));
-
-  // 12-hour time (hour : minute + صباحاً/مساءً)
-  const hourSel = selectControl(
-    "reqHour",
-    range(1, 12).map((n) => ({ value: pad2(n), label: pad2(n) })),
-  );
-  const minSel = selectControl(
-    "reqMin",
-    range(0, 59).map((n) => ({ value: pad2(n), label: pad2(n) })),
-  );
-  const perSel = selectControl("reqPer", [
-    { value: "صباحاً", label: "صباحاً" },
-    { value: "مساءً", label: "مساءً" },
-  ]);
-  const timeRow = el("div", "inline-fields");
-  timeRow.appendChild(hourSel);
-  timeRow.appendChild(minSel);
-  timeRow.appendChild(perSel);
-  form.appendChild(fieldRow("الوقت", timeRow));
-
-  // Include supervisors (unchecked by default)
-  const checkRow = el("div", "check-row");
-  const chk = el("input");
-  chk.type = "checkbox";
-  chk.id = "incSup";
-  const chkLabel = el("label", null, "إرسال للمشرفين أيضاً");
-  chkLabel.htmlFor = "incSup";
-  checkRow.appendChild(chk);
-  checkRow.appendChild(chkLabel);
-  form.appendChild(checkRow);
-
-  const submit = el("button", null, "إنشاء المتطلب");
-  submit.type = "submit";
-  form.appendChild(submit);
-  const msgNode = el("div", "form-msg");
-  form.appendChild(msgNode);
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const content = (contentControl.value || "").trim();
-    if (!content) {
-      setFormMsg(msgNode, "المحتوى مطلوب", false);
-      return;
-    }
-    const time = hourSel.value + ":" + minSel.value + " " + perSel.value;
-    submit.disabled = true;
-    setFormMsg(msgNode, "جارِ الحفظ...", null);
-    callApi({
-      action: "createRequirement",
-      adminId: currentSession.id,
-      content: content,
-      dateSystem: dateSystem,
-      dateValue: (dateControl.value || "").trim(),
-      time: time,
-      includeSupervisors: chk.checked,
-    })
-      .then((res) => {
-        if (res && res.success) {
-          setFormMsg(msgNode, "تم إنشاء المتطلب رقم " + res.requirementNumber, true);
-          contentControl.value = "";
-          dateControl.value = "";
-          chk.checked = false;
-          submit.disabled = false;
-        } else {
-          setFormMsg(msgNode, (res && res.message) || "تعذّر الحفظ", false);
-          submit.disabled = false;
-        }
-      })
-      .catch(() => {
-        setFormMsg(msgNode, "حدث خطأ، حاول مرة أخرى", false);
-        submit.disabled = false;
-      });
-  });
-
-  wrap.appendChild(form);
+  wrap.appendChild(buildStepper(REQ_WIZARD_STEPS, reqWizardState.step));
+  const card = el("div", "admin-form wizard-card");
+  if (reqWizardState.step === 1) buildReqStep1(card);
+  else if (reqWizardState.step === 2) buildReqStep2(card);
+  else buildReqStep3(card);
+  wrap.appendChild(card);
   setContent(wrap);
 }
 
-// =====================================================================
-// GUARDIAN view
-// =====================================================================
+// Date + time picker. system: هجري|ميلادي; initial {dateStr,timeStr}.
+function buildDateTimePicker(system, initial) {
+  const wrap = el("div");
+  const pd = parseDateStr(initial.dateStr);
+  const pt = parseTimeStr(initial.timeStr);
+  let getDate;
+
+  if (system === "هجري") {
+    const curHy = gregorianToHijri(new Date()).hy;
+    const yearSel = selectControl(null, [{ value: String(curHy), label: String(curHy) }]);
+    const monthSel = selectControl(null, range(1, 12).map((n) => ({ value: pad2(n), label: HIJRI_MONTHS[n - 1] })));
+    const daySel = selectControl(null, range(1, 30).map((n) => ({ value: pad2(n), label: String(n) })));
+    if (pd.mo) monthSel.value = pad2(Number(pd.mo));
+    if (pd.d) daySel.value = pad2(Number(pd.d));
+    const row = el("div", "inline-fields");
+    row.appendChild(daySel);
+    row.appendChild(monthSel);
+    row.appendChild(yearSel);
+    wrap.appendChild(fieldRow("التاريخ (هجري)", row));
+    getDate = () => yearSel.value + "/" + monthSel.value + "/" + daySel.value;
+  } else {
+    const dateInput = el("input");
+    dateInput.type = "date";
+    if (pd.y && pd.mo && pd.d) dateInput.value = pd.y + "-" + pad2(Number(pd.mo)) + "-" + pad2(Number(pd.d));
+    wrap.appendChild(fieldRow("التاريخ (ميلادي)", dateInput));
+    getDate = () => (dateInput.value ? dateInput.value.replace(/-/g, "/") : "");
+  }
+
+  // Time: hour (1-12) + minute (00-59) + AM/PM
+  const hourSel = selectControl(null, range(1, 12).map((n) => ({ value: pad2(n), label: pad2(n) })));
+  hourSel.value = pt.hour;
+  const minSel = selectControl(null, range(0, 59).map((n) => ({ value: pad2(n), label: pad2(n) })));
+  minSel.value = pt.minute;
+  const ampm = segmented(["صباحاً", "مساءً"], pt.period);
+  const timeRow = el("div", "inline-fields");
+  timeRow.appendChild(hourSel);
+  timeRow.appendChild(minSel);
+  timeRow.appendChild(ampm.node);
+  wrap.appendChild(fieldRow("الوقت", timeRow));
+
+  return {
+    node: wrap,
+    getValue: () => ({
+      dateStr: getDate(),
+      timeStr: hourSel.value + ":" + minSel.value + " " + ampm.get(),
+    }),
+  };
+}
+
+function buildReqStep1(card) {
+  card.appendChild(el("h3", null, "المتطلب"));
+  const content = el("textarea");
+  content.placeholder = "اكتب محتوى المتطلب (نص أو رابط)";
+  content.value = reqWizardState.content;
+  content.addEventListener("input", () => (reqWizardState.content = content.value));
+  card.appendChild(fieldRow("المحتوى", content));
+
+  const checkRow = el("div", "check-row");
+  const chk = el("input");
+  chk.type = "checkbox";
+  chk.id = "reqIncSup";
+  chk.checked = reqWizardState.includeSupervisors;
+  chk.addEventListener("change", () => (reqWizardState.includeSupervisors = chk.checked));
+  const lbl = el("label", null, "إرسال للمشرفين أيضاً");
+  lbl.htmlFor = "reqIncSup";
+  checkRow.appendChild(chk);
+  checkRow.appendChild(lbl);
+  card.appendChild(checkRow);
+
+  const msgNode = el("div", "form-msg");
+  card.appendChild(msgNode);
+  const nav = el("div", "wizard-nav");
+  const next = el("button", null, "التالي");
+  next.type = "button";
+  next.addEventListener("click", () => {
+    if (!content.value.trim()) {
+      setFormMsg(msgNode, "المحتوى مطلوب", false);
+      return;
+    }
+    reqWizardState.content = content.value.trim();
+    reqWizardState.step = 2;
+    renderReqWizard();
+  });
+  nav.appendChild(next);
+  card.appendChild(nav);
+}
+
+function buildReqStep2(card) {
+  card.appendChild(el("h3", null, "تاريخ ووقت البداية"));
+
+  const sysToggle = toggleGroup(["هجري", "ميلادي"], reqWizardState.dateSystem, (val) => {
+    if (val !== reqWizardState.dateSystem) {
+      reqWizardState.dateSystem = val;
+      reqWizardState.start = { dateStr: "", timeStr: "" };
+      reqWizardState.end = { dateStr: "", timeStr: "" };
+      renderReqWizard();
+    }
+  });
+  card.appendChild(fieldRow("نظام التاريخ", sysToggle));
+
+  const nowBtn = el("button", "btn-secondary now-btn", "الآن");
+  nowBtn.type = "button";
+  nowBtn.addEventListener("click", () => {
+    reqWizardState.start = nowValue(reqWizardState.dateSystem);
+    renderReqWizard();
+  });
+  card.appendChild(nowBtn);
+
+  const picker = buildDateTimePicker(reqWizardState.dateSystem, reqWizardState.start);
+  reqWizardState.picker = picker;
+  card.appendChild(picker.node);
+
+  const msgNode = el("div", "form-msg");
+  card.appendChild(msgNode);
+  const nav = el("div", "wizard-nav");
+  const back = el("button", "btn-secondary", "رجوع");
+  back.type = "button";
+  back.addEventListener("click", () => {
+    reqWizardState.start = picker.getValue();
+    reqWizardState.step = 1;
+    renderReqWizard();
+  });
+  const next = el("button", null, "التالي");
+  next.type = "button";
+  next.addEventListener("click", () => {
+    const v = picker.getValue();
+    if (!v.dateStr) {
+      setFormMsg(msgNode, "حدد تاريخ البداية", false);
+      return;
+    }
+    reqWizardState.start = v;
+    reqWizardState.step = 3;
+    renderReqWizard();
+  });
+  nav.appendChild(back);
+  nav.appendChild(next);
+  card.appendChild(nav);
+}
+
+function buildReqStep3(card) {
+  card.appendChild(el("h3", null, "تاريخ ووقت النهاية"));
+  card.appendChild(
+    el(
+      "div",
+      "wizard-review",
+      "النظام: " + reqWizardState.dateSystem + " • البداية: " +
+        (reqWizardState.start.dateStr || "—") + " " + (reqWizardState.start.timeStr || ""),
+    ),
+  );
+  const picker = buildDateTimePicker(reqWizardState.dateSystem, reqWizardState.end);
+  reqWizardState.picker = picker;
+  card.appendChild(picker.node);
+
+  const msgNode = el("div", "form-msg");
+  card.appendChild(msgNode);
+  const nav = el("div", "wizard-nav");
+  const back = el("button", "btn-secondary", "رجوع");
+  back.type = "button";
+  back.addEventListener("click", () => {
+    reqWizardState.end = picker.getValue();
+    reqWizardState.step = 2;
+    renderReqWizard();
+  });
+  const finish = el("button", null, "إنشاء المتطلب");
+  finish.type = "button";
+  finish.addEventListener("click", () => finalizeReqWizard(finish, back, picker, msgNode));
+  nav.appendChild(back);
+  nav.appendChild(finish);
+  card.appendChild(nav);
+}
+
+function finalizeReqWizard(finishBtn, backBtn, endPicker, msgNode) {
+  const end = endPicker.getValue();
+  if (!end.dateStr) {
+    setFormMsg(msgNode, "حدد تاريخ النهاية", false);
+    return;
+  }
+  reqWizardState.end = end;
+  finishBtn.disabled = true;
+  backBtn.disabled = true;
+  setFormMsg(msgNode, "جارِ الحفظ...", null);
+  callApi({
+    action: "createRequirement",
+    adminId: currentSession.id,
+    content: reqWizardState.content,
+    dateSystem: reqWizardState.dateSystem,
+    startDate: reqWizardState.start.dateStr,
+    startTime: reqWizardState.start.timeStr,
+    endDate: reqWizardState.end.dateStr,
+    endTime: reqWizardState.end.timeStr,
+    includeSupervisors: reqWizardState.includeSupervisors,
+  })
+    .then((res) => {
+      if (res && res.success) {
+        setFormMsg(msgNode, "تم إنشاء المتطلب رقم " + res.requirementNumber, true);
+        setTimeout(renderAdminRequirements, 1500);
+      } else {
+        setFormMsg(msgNode, (res && res.message) || "تعذّر الحفظ", false);
+        finishBtn.disabled = false;
+        backBtn.disabled = false;
+      }
+    })
+    .catch(() => {
+      setFormMsg(msgNode, "حدث خطأ، حاول مرة أخرى", false);
+      finishBtn.disabled = false;
+      backBtn.disabled = false;
+    });
+}
+
+// ===== GUARDIAN view =====
 function renderGuardianHome() {
   loadInto(
     { action: "getChildProgress", guardianId: currentSession.id },
@@ -1123,32 +1402,24 @@ function renderGuardianHome() {
       const wrap = el("div", "view");
       wrap.appendChild(el("h3", "child-name", fullName(res.student.firstName, res.student.lastName)));
       wrap.appendChild(ringChart(res.completionPercentage, "نسبة الإنجاز"));
-      wrap.appendChild(
-        el("div", "child-count", res.completedCount + " من " + res.totalCount + " متطلب"),
-      );
+      wrap.appendChild(el("div", "child-count", res.completedCount + " من " + res.totalCount + " متطلب"));
       setContent(wrap);
     },
   );
 }
 
-// =====================================================================
-// Auth flow
-// =====================================================================
+// ===== Auth flow =====
 idForm.addEventListener("submit", function (e) {
   e.preventDefault();
   const id = idInput.value.trim();
-
   if (!/^\d{6}$/.test(id)) {
     showMsg("المعرف يجب أن يكون 6 أرقام فقط", "error");
     return;
   }
-
   showMsg("جارِ التحقق...", "info");
-
   submitRequest(idSubmitBtn, { action: "checkId", id: id }, (result) => {
     currentId = id;
     showMsg("", "");
-
     if (result.type === "guardian") {
       setRole("ولي أمر");
       showMsg("جارِ الدخول...", "info");
@@ -1165,15 +1436,9 @@ idForm.addEventListener("submit", function (e) {
         },
       );
     }
-
-    // type === "account"
     setRole(ROLE_LABELS[result.role] || result.role);
-
-    if (result.activated) {
-      showStep(step3);
-    } else {
-      showStep(step2);
-    }
+    if (result.activated) showStep(step3);
+    else showStep(step2);
   });
 });
 
@@ -1182,31 +1447,19 @@ activateForm.addEventListener("submit", function (e) {
   const firstName = firstNameInput.value.trim();
   const lastName = lastNameInput.value.trim();
   const password = newPasswordInput.value.trim();
-
   if (!/^\d{4}$/.test(password)) {
     showMsg("كلمة المرور يجب أن تكون 4 أرقام فقط", "error");
     return;
   }
-
   showMsg("جارِ التفعيل...", "info");
-
   submitRequest(
     activateSubmitBtn,
-    {
-      action: "activate",
-      id: currentId,
-      firstName: firstName,
-      lastName: lastName,
-      password: password,
-    },
+    { action: "activate", id: currentId, firstName: firstName, lastName: lastName, password: password },
     (result) => {
       const guardianId =
-        result.guardianId !== undefined &&
-        result.guardianId !== null &&
-        result.guardianId !== ""
+        result.guardianId !== undefined && result.guardianId !== null && result.guardianId !== ""
           ? result.guardianId
           : undefined;
-
       enterApp({
         kind: "account",
         id: currentId,
@@ -1222,9 +1475,7 @@ activateForm.addEventListener("submit", function (e) {
 loginForm.addEventListener("submit", function (e) {
   e.preventDefault();
   const password = passwordInput.value.trim();
-
   showMsg("جارِ الدخول...", "info");
-
   submitRequest(
     loginSubmitBtn,
     { action: "login", id: currentId, password: password },
@@ -1240,12 +1491,9 @@ loginForm.addEventListener("submit", function (e) {
   );
 });
 
-// ===== Init: restore a persisted session, else show the login form =====
+// ===== Init =====
 (function restoreSession() {
   const s = loadSession();
-  if (validSession(s)) {
-    enterApp(s);
-  } else if (s) {
-    clearSession();
-  }
+  if (validSession(s)) enterApp(s);
+  else if (s) clearSession();
 })();
