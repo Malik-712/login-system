@@ -151,14 +151,11 @@ function countdownText(endTs) {
   if (endTs == null) return "";
   const ms = endTs - Date.now();
   if (ms <= 0) return "";
-  const mins = Math.floor(ms / 60000);
-  const hours = Math.floor(mins / 60);
+  const hours = Math.floor(ms / 3600000);
   const days = Math.floor(hours / 24);
-  let unit;
-  if (days >= 1) unit = pluralAr(days, "يوم", "يومان", "أيام", "يوماً");
-  else if (hours >= 1) unit = pluralAr(hours, "ساعة", "ساعتان", "ساعات", "ساعة");
-  else unit = pluralAr(mins, "دقيقة", "دقيقتان", "دقائق", "دقيقة");
-  return "باقي لها " + unit;
+  if (days >= 1) return "باقي لها " + pluralAr(days, "يوم", "يومان", "أيام", "يوماً");
+  if (hours >= 1) return "باقي لها " + pluralAr(hours, "ساعة", "ساعتان", "ساعات", "ساعة");
+  return "أقل من ساعة";
 }
 
 function statusBadge(status) {
@@ -225,6 +222,25 @@ function callApi(payload) {
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload),
   }).then((res) => res.json());
+}
+
+// Backend requests are slow (~seconds), so cache successful read responses for
+// the session. Switching between tabs that reuse the same data (e.g. a
+// supervisor's home/الطلاب/سجل, all getFamilyProgress) then costs nothing.
+// Any write (completing a requirement, admin actions, logout) clears it.
+const __apiCache = {};
+function cachedCall(payload) {
+  const key = JSON.stringify(payload);
+  if (Object.prototype.hasOwnProperty.call(__apiCache, key)) {
+    return Promise.resolve(__apiCache[key]);
+  }
+  return callApi(payload).then((r) => {
+    if (r && r.success) __apiCache[key] = r;
+    return r;
+  });
+}
+function clearApiCache() {
+  for (const k in __apiCache) delete __apiCache[k];
 }
 
 function submitRequest(button, payload, onSuccess) {
@@ -317,7 +333,7 @@ function errorNode(message) {
 
 function loadInto(payload, onSuccess) {
   setContent(loadingNode());
-  callApi(payload)
+  cachedCall(payload)
     .then((result) => {
       if (!result || !result.success) {
         setContent(errorNode(result && result.message));
@@ -422,6 +438,7 @@ document.addEventListener("keydown", (e) => {
 
 logoutButton.addEventListener("click", () => {
   clearSession();
+  clearApiCache();
   currentSession = null;
   closeMenu();
   goToStep1();
@@ -466,15 +483,6 @@ function contentNode(item, linkClass, textClass) {
     return a;
   }
   return el("span", textClass, item.content);
-}
-
-function windowText(item) {
-  const s = [item.startDate, item.startTime].filter(Boolean).join(" ");
-  const e = [item.endDate, item.endTime].filter(Boolean).join(" ");
-  if (s && e) return "من " + s + " إلى " + e;
-  if (s) return "يبدأ: " + s;
-  if (e) return "ينتهي: " + e;
-  return "";
 }
 
 // ===== STUDENT views =====
@@ -532,6 +540,7 @@ function todoItem(req) {
       })
         .then((r) => {
           if (r && r.success) {
+            clearApiCache(); // this user's lists/records changed
             li.classList.add("done");
             btn.textContent = "تم";
             btn.classList.add("checked");
@@ -819,17 +828,24 @@ function renderAdminAccounts() {
         setContent(wrap);
         return;
       }
+      const PLURAL = { [STUDENTS]: "طلاب", [SUPERVISORS]: "مشرفين", [ADMINS]: "مسؤولون" };
       [STUDENTS, SUPERVISORS, ADMINS].forEach((role) => {
         const rows = res.accounts.filter((a) => a.role === role);
         if (!rows.length) return;
-        wrap.appendChild(el("h3", "section-title", ROLE_LABELS[role] + " (" + rows.length + ")"));
+        wrap.appendChild(el("h3", "section-title", PLURAL[role]));
         const list = el("div", "account-list");
         rows.forEach((a) => {
           const item = el("div", "account-item");
-          const name = fullName(a.firstName, a.lastName) || ("معرف " + a.id);
-          item.appendChild(el("span", "account-name", name));
+          // Activated accounts show their name; unactivated ones (no name yet)
+          // show their ID. Name and status are separate, spaced elements.
+          const label = fullName(a.firstName, a.lastName) || String(a.id);
+          item.appendChild(el("span", "account-name", label));
           item.appendChild(
-            el("span", "status-badge " + (a.activated ? "active" : "expired"), a.activated ? "مفعّل" : "غير مفعّل"),
+            el(
+              "span",
+              "status-badge " + (a.activated ? "active" : "expired"),
+              a.activated ? "مفعّل" : "غير مفعّل",
+            ),
           );
           list.appendChild(item);
         });
@@ -1074,6 +1090,7 @@ function buildWizardStep3(card) {
           callApi({ action: "removeStudentFromFamily", adminId: currentSession.id, studentId: stu.id })
             .then((r) => {
               if (r && r.success) {
+                clearApiCache();
                 stu.family = "";
                 renderWizard();
               } else {
@@ -1146,6 +1163,7 @@ async function finalizeWizard(finishBtn, backBtn, msgNode) {
       if (r && r.success) assigned++;
       else failed++;
     }
+    clearApiCache();
     let m = "تم إنشاء الأسرة «" + wizardState.familyName + "» وإسناد " + assigned + " طالب";
     if (failed) m += " (تعذّر إسناد " + failed + ")";
     setFormMsg(msgNode, m, true);
@@ -1379,6 +1397,7 @@ function finalizeReqWizard(finishBtn, backBtn, endPicker, msgNode) {
   })
     .then((res) => {
       if (res && res.success) {
+        clearApiCache();
         setFormMsg(msgNode, "تم إنشاء المتطلب رقم " + res.requirementNumber, true);
         setTimeout(renderAdminRequirements, 1500);
       } else {

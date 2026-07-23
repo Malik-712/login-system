@@ -1062,6 +1062,90 @@ button:disabled {
   color: var(--muted);
 }
 
+/* ===== Status badge + countdown ===== */
+.status-badge {
+  flex: none;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.status-badge.active {
+  color: #15803d;
+  background: var(--success-soft);
+}
+.status-badge.upcoming {
+  color: var(--primary-dark);
+  background: #eaf1fe;
+}
+.status-badge.expired {
+  color: #b91c1c;
+  background: #fde8e8;
+}
+.countdown {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.todo-item.dim {
+  opacity: 0.75;
+}
+.todo-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Section heading inside a view */
+.section-title {
+  margin: 18px 0 10px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--secondary);
+}
+
+/* Creator label on supervisor requirement rows */
+.record-body {
+  flex: 1;
+  min-width: 0;
+}
+.creator-label {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* "الآن" button in the requirement wizard */
+.now-btn {
+  width: 100%;
+  margin: 0 0 12px;
+}
+
+/* ===== Admin: accounts list ===== */
+.account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.account-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.account-name {
+  font-weight: 700;
+  color: var(--secondary);
+  word-break: break-word;
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 480px) {
   body {

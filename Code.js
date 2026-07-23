@@ -36,17 +36,18 @@ var COL_FAMILY_NAME = 1; // اسم الأسرة (unique key — no numeric id)
 var COL_FAMILY_SUPERVISOR = 2; // معرف المشرف (references المشرفين)
 var COL_FAMILY_CREATED = 3; // تاريخ الإنشاء
 
-// المتطلبات columns
+// المتطلبات columns (11 total — matches the actual sheet order)
 var COL_REQ_NUMBER = 1; // رقم المتطلب (sequential, starts at 101)
-var COL_REQ_CONTENT = 2; // المحتوى (text or URL — link auto-detected on display)
-var COL_REQ_DATE_SYSTEM = 3; // نظام التاريخ ("هجري" | "ميلادي")
-var COL_REQ_START_DATE = 4; // تاريخ البداية (plain text, chosen system)
-var COL_REQ_START_TIME = 5; // وقت البداية (plain text, 12-hour)
-var COL_REQ_END_DATE = 6; // تاريخ النهاية (plain text, chosen system)
-var COL_REQ_END_TIME = 7; // وقت النهاية (plain text, 12-hour)
-var COL_REQ_INCLUDE_SUPERVISORS = 8; // يشمل المشرفين ("نعم" | "لا")
-var COL_REQ_CREATED = 9; // تاريخ الإنشاء
-var COL_REQ_CREATOR = 10; // أنشأه (admin's full name)
+var COL_REQ_CONTENT_TYPE = 2; // نوع المحتوى (kept blank — type auto-detected on display)
+var COL_REQ_CONTENT = 3; // المحتوى (text or URL)
+var COL_REQ_DATE_SYSTEM = 4; // نظام التاريخ ("هجري" | "ميلادي")
+var COL_REQ_START_DATE = 5; // تاريخ البداية (plain text, chosen system)
+var COL_REQ_START_TIME = 6; // وقت البداية (plain text, 12-hour)
+var COL_REQ_END_DATE = 7; // تاريخ النهاية (plain text, chosen system)
+var COL_REQ_END_TIME = 8; // وقت النهاية (plain text, 12-hour)
+var COL_REQ_INCLUDE_SUPERVISORS = 9; // يشمل المشرفين ("نعم" | "لا")
+var COL_REQ_CREATED = 10; // تاريخ الإنشاء
+var COL_REQ_CREATOR = 11; // أنشأه (admin's full name)
 
 // الإنجازات columns
 var COL_COMP_REQ_NUMBER = 1; // رقم المتطلب (references المتطلبات col 1)
@@ -61,28 +62,40 @@ function getSheetByName(name) {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
 }
 
-function findRowById(sheet, id) {
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(id)) {
-      return i + 1;
-    }
+// ===== Per-request caches (globals reset between Apps Script executions) =====
+// Read each sheet's full range at most ONCE per request; every helper below
+// reuses this instead of calling getDataRange() again. This is the single
+// biggest latency win — sheet reads are the dominant cost.
+var __sheetCache = {};
+function sheetData(name) {
+  if (__sheetCache[name] === undefined) {
+    var sheet = getSheetByName(name);
+    __sheetCache[name] = sheet ? sheet.getDataRange().getValues() : [];
   }
-  return -1;
+  return __sheetCache[name];
 }
 
-// Locate an account by ID across all account sheets.
+// A single cached Intl formatter — constructing one per call is very slow.
+var __umFmt = null;
+function umFmt() {
+  if (!__umFmt) {
+    __umFmt = new Intl.DateTimeFormat('en-US-u-ca-islamic-umalqura', {
+      year: 'numeric', month: 'numeric', day: 'numeric'
+    });
+  }
+  return __umFmt;
+}
+
+// Locate an account by ID across account sheets (cached reads; stops at match).
 // Returns { sheet, sheetName, row } or null.
 function findAccount(id) {
   for (var s = 0; s < ACCOUNT_SHEETS.length; s++) {
     var name = ACCOUNT_SHEETS[s];
-    var sheet = getSheetByName(name);
-    if (!sheet) {
-      continue;
-    }
-    var row = findRowById(sheet, id);
-    if (row !== -1) {
-      return { sheet: sheet, sheetName: name, row: row };
+    var data = sheetData(name);
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][COL_ID - 1]) === String(id)) {
+        return { sheet: getSheetByName(name), sheetName: name, row: i + 1 };
+      }
     }
   }
   return null;
@@ -90,11 +103,7 @@ function findAccount(id) {
 
 // Locate the student whose guardian ID (الطلاب col 9) matches. Returns row or -1.
 function findStudentRowByGuardianId(guardianId) {
-  var sheet = getSheetByName(STUDENTS_SHEET);
-  if (!sheet) {
-    return -1;
-  }
-  var data = sheet.getDataRange().getValues();
+  var data = sheetData(STUDENTS_SHEET);
   for (var i = 1; i < data.length; i++) {
     var gid = data[i][COL_GUARDIAN_ID - 1];
     if (gid !== '' && gid !== null && gid !== undefined && String(gid) === String(guardianId)) {
@@ -112,11 +121,7 @@ function generateGuardianId() {
   var used = {};
 
   for (var s = 0; s < ACCOUNT_SHEETS.length; s++) {
-    var sheet = getSheetByName(ACCOUNT_SHEETS[s]);
-    if (!sheet) {
-      continue;
-    }
-    var data = sheet.getDataRange().getValues();
+    var data = sheetData(ACCOUNT_SHEETS[s]);
     for (var i = 1; i < data.length; i++) {
       used[String(data[i][COL_ID - 1])] = true;
       var gid = data[i][COL_GUARDIAN_ID - 1];
@@ -255,11 +260,10 @@ function activateAccount(id, firstName, lastName, password) {
     return { success: false, message: 'الرجاء إدخال الاسم الأول والأخير' };
   }
 
-  sheet.getRange(row, COL_FIRST_NAME).setValue(firstName);
-  sheet.getRange(row, COL_LAST_NAME).setValue(lastName);
-  sheet.getRange(row, COL_PASSWORD).setValue(password);
-  sheet.getRange(row, COL_STATUS).setValue(STATUS_ACTIVE);
-  sheet.getRange(row, COL_CREATED).setValue(new Date());
+  // Batch write cols 3..7 (first, last, password, status, created) in one call.
+  sheet.getRange(row, COL_FIRST_NAME, 1, 5).setValues([
+    [firstName, lastName, password, STATUS_ACTIVE, new Date()]
+  ]);
 
   var response = {
     success: true,
@@ -346,11 +350,7 @@ function isAdmin(id) {
 
 // Locate a family by its name (the key). Returns the row number or -1.
 function findFamilyRow(name) {
-  var sheet = getSheetByName(FAMILIES_SHEET);
-  if (!sheet) {
-    return -1;
-  }
-  var data = sheet.getDataRange().getValues();
+  var data = sheetData(FAMILIES_SHEET);
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][COL_FAMILY_NAME - 1]) === String(name)) {
       return i + 1;
@@ -359,7 +359,7 @@ function findFamilyRow(name) {
   return -1;
 }
 
-// First/last name for any account id, or null if not found.
+// First/last name for any account id, or null if not found (cached reads).
 function getAccountName(id) {
   if (id === '' || id === null || id === undefined) {
     return null;
@@ -368,20 +368,14 @@ function getAccountName(id) {
   if (!account) {
     return null;
   }
-  return {
-    firstName: account.sheet.getRange(account.row, COL_FIRST_NAME).getValue(),
-    lastName: account.sheet.getRange(account.row, COL_LAST_NAME).getValue()
-  };
+  var row = sheetData(account.sheetName)[account.row - 1];
+  return { firstName: row[COL_FIRST_NAME - 1], lastName: row[COL_LAST_NAME - 1] };
 }
 
 // All students as { id, firstName, lastName, family, guardianId }.
 function getAllStudents() {
-  var sheet = getSheetByName(STUDENTS_SHEET);
+  var data = sheetData(STUDENTS_SHEET);
   var list = [];
-  if (!sheet) {
-    return list;
-  }
-  var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     var id = data[i][COL_ID - 1];
     if (id === '' || id === null || id === undefined) {
@@ -399,14 +393,19 @@ function getAllStudents() {
   return list;
 }
 
+// Empty for null/undefined; a Date coerces to a clean "yyyy/MM/dd" string so a
+// raw Date (auto-parsed by Sheets from "YYYY/MM/DD" text) never leaks to the UI.
+function cellStr(v) {
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy/MM/dd');
+  }
+  return v === null || v === undefined ? '' : String(v);
+}
+
 // All requirements, in sheet order.
 function getAllRequirements() {
-  var sheet = getSheetByName(REQUIREMENTS_SHEET);
+  var data = sheetData(REQUIREMENTS_SHEET);
   var list = [];
-  if (!sheet) {
-    return list;
-  }
-  var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     var num = data[i][COL_REQ_NUMBER - 1];
     if (num === '' || num === null || num === undefined) {
@@ -414,15 +413,15 @@ function getAllRequirements() {
     }
     list.push({
       number: String(num),
-      content: data[i][COL_REQ_CONTENT - 1],
-      dateSystem: data[i][COL_REQ_DATE_SYSTEM - 1],
-      startDate: data[i][COL_REQ_START_DATE - 1],
-      startTime: data[i][COL_REQ_START_TIME - 1],
-      endDate: data[i][COL_REQ_END_DATE - 1],
-      endTime: data[i][COL_REQ_END_TIME - 1],
+      content: cellStr(data[i][COL_REQ_CONTENT - 1]),
+      dateSystem: cellStr(data[i][COL_REQ_DATE_SYSTEM - 1]),
+      startDate: cellStr(data[i][COL_REQ_START_DATE - 1]),
+      startTime: cellStr(data[i][COL_REQ_START_TIME - 1]),
+      endDate: cellStr(data[i][COL_REQ_END_DATE - 1]),
+      endTime: cellStr(data[i][COL_REQ_END_TIME - 1]),
       includeSupervisors: data[i][COL_REQ_INCLUDE_SUPERVISORS - 1] === 'نعم',
       created: data[i][COL_REQ_CREATED - 1],
-      creator: data[i][COL_REQ_CREATOR - 1]
+      creator: cellStr(data[i][COL_REQ_CREATOR - 1])
     });
   }
   return list;
@@ -430,12 +429,8 @@ function getAllRequirements() {
 
 // Map: userId (string) -> { requirementNumber (string): true }.
 function getCompletionsByUser() {
-  var sheet = getSheetByName(COMPLETIONS_SHEET);
+  var data = sheetData(COMPLETIONS_SHEET);
   var map = {};
-  if (!sheet) {
-    return map;
-  }
-  var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     var reqNum = data[i][COL_COMP_REQ_NUMBER - 1];
     var userId = data[i][COL_COMP_USER_ID - 1];
@@ -453,15 +448,12 @@ function getCompletionsByUser() {
 
 // Next رقم المتطلب: max existing value + 1, or REQ_START_NUMBER when empty.
 function nextRequirementNumber() {
-  var sheet = getSheetByName(REQUIREMENTS_SHEET);
+  var data = sheetData(REQUIREMENTS_SHEET);
   var max = REQ_START_NUMBER - 1;
-  if (sheet) {
-    var data = sheet.getDataRange().getValues();
-    for (var i = 1; i < data.length; i++) {
-      var num = Number(data[i][COL_REQ_NUMBER - 1]);
-      if (!isNaN(num) && num > max) {
-        max = num;
-      }
+  for (var i = 1; i < data.length; i++) {
+    var num = Number(data[i][COL_REQ_NUMBER - 1]);
+    if (!isNaN(num) && num > max) {
+      max = num;
     }
   }
   return max + 1;
@@ -481,11 +473,8 @@ function isToday(dateValue) {
 // Apps Script's Intl supports the islamic-umalqura calendar, so this matches
 // the frontend's Intl display exactly.
 function gregToUmalqura(date) {
-  var fmt = new Intl.DateTimeFormat('en-US-u-ca-islamic-umalqura', {
-    year: 'numeric', month: 'numeric', day: 'numeric'
-  });
   var o = {};
-  fmt.formatToParts(date).forEach(function (p) {
+  umFmt().formatToParts(date).forEach(function (p) {
     if (p.type === 'year') o.hy = Number(p.value);
     else if (p.type === 'month') o.hm = Number(p.value);
     else if (p.type === 'day') o.hd = Number(p.value);
@@ -657,35 +646,32 @@ function listSupervisors(adminId) {
   }
 
   var assigned = {};
-  var famSheet = getSheetByName(FAMILIES_SHEET);
-  if (famSheet) {
-    var famData = famSheet.getDataRange().getValues();
-    for (var f = 1; f < famData.length; f++) {
-      var supId = famData[f][COL_FAMILY_SUPERVISOR - 1];
-      if (supId !== '' && supId !== null && supId !== undefined) {
-        assigned[String(supId)] = true;
-      }
+  var famData = sheetData(FAMILIES_SHEET);
+  for (var f = 1; f < famData.length; f++) {
+    var supId = famData[f][COL_FAMILY_SUPERVISOR - 1];
+    if (supId !== '' && supId !== null && supId !== undefined) {
+      assigned[String(supId)] = true;
     }
   }
 
-  var sheet = getSheetByName(SUPERVISORS_SHEET);
   var supervisors = [];
-  if (sheet) {
-    var data = sheet.getDataRange().getValues();
-    for (var i = 1; i < data.length; i++) {
-      var id = data[i][COL_ID - 1];
-      if (id === '' || id === null || id === undefined) {
-        continue;
-      }
-      if (assigned[String(id)]) {
-        continue; // already manages a family
-      }
-      supervisors.push({
-        id: String(id),
-        firstName: data[i][COL_FIRST_NAME - 1],
-        lastName: data[i][COL_LAST_NAME - 1]
-      });
+  var data = sheetData(SUPERVISORS_SHEET);
+  for (var i = 1; i < data.length; i++) {
+    var id = data[i][COL_ID - 1];
+    if (id === '' || id === null || id === undefined) {
+      continue;
     }
+    if (data[i][COL_STATUS - 1] !== STATUS_ACTIVE) {
+      continue; // only activated supervisors appear
+    }
+    if (assigned[String(id)]) {
+      continue; // already manages a family
+    }
+    supervisors.push({
+      id: String(id),
+      firstName: data[i][COL_FIRST_NAME - 1],
+      lastName: data[i][COL_LAST_NAME - 1]
+    });
   }
   return { success: true, supervisors: supervisors };
 }
@@ -720,11 +706,7 @@ function listAllAccounts(adminId) {
   var accounts = [];
   for (var s = 0; s < ACCOUNT_SHEETS.length; s++) {
     var name = ACCOUNT_SHEETS[s];
-    var sheet = getSheetByName(name);
-    if (!sheet) {
-      continue;
-    }
-    var data = sheet.getDataRange().getValues();
+    var data = sheetData(name);
     for (var i = 1; i < data.length; i++) {
       var id = data[i][COL_ID - 1];
       if (id === '' || id === null || id === undefined) {
@@ -747,8 +729,7 @@ function listFamiliesOverview(adminId) {
     return unauthorized();
   }
 
-  var famSheet = getSheetByName(FAMILIES_SHEET);
-  var famData = famSheet ? famSheet.getDataRange().getValues() : [];
+  var famData = sheetData(FAMILIES_SHEET);
   var students = getAllStudents();
   var requirements = getAllRequirements();
   var completions = getCompletionsByUser();
@@ -820,23 +801,33 @@ function createRequirement(adminId, content, dateSystem, startDate, startTime, e
 
   var number = nextRequirementNumber();
   var creatorName = getAccountName(adminId);
-  var creator = creatorName ? String(creatorName.firstName || '') + ' ' + String(creatorName.lastName || '') : '';
-  creator = creator.trim();
+  var creator = creatorName
+    ? (String(creatorName.firstName || '') + ' ' + String(creatorName.lastName || '')).trim()
+    : '';
 
-  // Content is plain text (link auto-detected on display); start/end dates &
-  // times are stored as plain text in the chosen date system; أنشأه = creator.
-  getSheetByName(REQUIREMENTS_SHEET).appendRow([
-    number,
-    content,
-    dateSystem,
-    startDate || '',
-    startTime || '',
-    endDate || '',
-    endTime || '',
-    includeSup,
-    new Date(),
-    creator
+  // Full 11-column row. Col 2 (نوع المحتوى) is left blank — the type is
+  // auto-detected on display. Col order must match the sheet exactly.
+  var sheet = getSheetByName(REQUIREMENTS_SHEET);
+  sheet.appendRow([
+    number,           // 1  رقم المتطلب
+    '',               // 2  نوع المحتوى (unused)
+    content,          // 3  المحتوى
+    dateSystem,       // 4  نظام التاريخ
+    startDate || '',  // 5  تاريخ البداية
+    startTime || '',  // 6  وقت البداية
+    endDate || '',    // 7  تاريخ النهاية
+    endTime || '',    // 8  وقت النهاية
+    includeSup,       // 9  يشمل المشرفين
+    new Date(),       // 10 تاريخ الإنشاء
+    creator           // 11 أنشأه
   ]);
+
+  // Force the date/time columns (5..8) to plain text so Sheets doesn't
+  // auto-parse e.g. "1448/02/09" into a Date, then re-write the exact strings.
+  var row = sheet.getLastRow();
+  var dtRange = sheet.getRange(row, COL_REQ_START_DATE, 1, 4);
+  dtRange.setNumberFormat('@');
+  dtRange.setValues([[startDate || '', startTime || '', endDate || '', endTime || '']]);
 
   return { success: true, message: 'تم إنشاء المتطلب', requirementNumber: number };
 }
@@ -914,8 +905,7 @@ function completeRequirement(userId, requirementNumber) {
     return { success: false, message: 'انتهى وقت المتطلب' };
   }
 
-  var sheet = getSheetByName(COMPLETIONS_SHEET);
-  var data = sheet.getDataRange().getValues();
+  var data = sheetData(COMPLETIONS_SHEET);
   for (var r = 1; r < data.length; r++) {
     if (
       String(data[r][COL_COMP_REQ_NUMBER - 1]) === reqNum &&
@@ -925,7 +915,7 @@ function completeRequirement(userId, requirementNumber) {
     }
   }
 
-  sheet.appendRow([Number(reqNum), userId, new Date()]);
+  getSheetByName(COMPLETIONS_SHEET).appendRow([Number(reqNum), userId, new Date()]);
   return { success: true, message: 'تم تسجيل الإنجاز', alreadyCompleted: false };
 }
 
@@ -936,8 +926,7 @@ function getFamilyProgress(supervisorId) {
     return unauthorized();
   }
 
-  var famSheet = getSheetByName(FAMILIES_SHEET);
-  var famData = famSheet ? famSheet.getDataRange().getValues() : [];
+  var famData = sheetData(FAMILIES_SHEET);
   var family = null;
   for (var i = 1; i < famData.length; i++) {
     if (String(famData[i][COL_FAMILY_SUPERVISOR - 1]) === String(supervisorId)) {
@@ -1017,8 +1006,7 @@ function getFamilyMembersSimpleStatus(studentId) {
   }
 
   var supId = '';
-  var famSheet = getSheetByName(FAMILIES_SHEET);
-  var famData = famSheet ? famSheet.getDataRange().getValues() : [];
+  var famData = sheetData(FAMILIES_SHEET);
   for (var i = 1; i < famData.length; i++) {
     if (String(famData[i][COL_FAMILY_NAME - 1]) === String(familyName)) {
       supId = famData[i][COL_FAMILY_SUPERVISOR - 1];
